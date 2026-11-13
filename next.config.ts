@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // native / server-only modules must not be bundled
+  serverExternalPackages: ["better-sqlite3"],
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {

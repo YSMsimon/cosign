@@ -16,8 +16,9 @@ import {
   type Address,
   type Hash,
 } from "viem";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { companyTreasuryAbi, treasuryFactoryAbi, TREASURY_FACTORY_ADDRESS } from "./contracts/abis";
+import { watchAddresses } from "./quicknode/kv";
 
 const env = (k: string) => {
   const v = process.env[k];
@@ -75,14 +76,28 @@ export async function callFrom<const A extends Abi>(
 ) {
   const w = wallet(refId);
   const callData = encodeFunctionData({ abi: abi as Abi, functionName, args } as never);
-  const tx = await circle().createContractExecutionTransaction({
-    walletId: w.id,
-    contractAddress: contract,
-    callData,
-    fee: FEE,
-  });
-  const done = await circle().getTransaction({ id: tx.data!.id!, waitForTxHash: true });
-  const hash = done.data!.transaction!.txHash as Hash;
+  let hash: Hash | undefined;
+  for (let attempt = 0; !hash; attempt++) {
+    const tx = await circle().createContractExecutionTransaction({
+      walletId: w.id,
+      contractAddress: contract,
+      callData,
+      fee: FEE,
+    });
+    try {
+      const done = await circle().getTransaction({ id: tx.data!.id!, waitForTxHash: true });
+      hash = done.data!.transaction!.txHash as Hash;
+    } catch (e) {
+      // Circle can estimate gas on a node a block or two behind ours, so a call that depends on the
+      // previous tx (approve right after propose) reverts in estimation. Nothing was broadcast, so
+      // retrying is safe. Seen 2026-11-13: approve → UnknownProposal() one block after propose.
+      if (attempt < 3 && /ESTIMATION_ERROR/.test(String((e as Error)?.message ?? e))) {
+        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+        continue;
+      }
+      throw e;
+    }
+  }
   const receipt = await chain.waitForTransactionReceipt({ hash });
   if (receipt.status !== "success") throw new Error(`${functionName} reverted: ${explorerTx(hash)}`);
   return { hash, receipt };
@@ -125,7 +140,12 @@ export async function createCompany(
   for (const log of receipt.logs) {
     try {
       const ev = decodeEventLog({ abi: treasuryFactoryAbi, data: log.data, topics: log.topics });
-      if (ev.eventName === "TreasuryCreated") return { treasury: ev.args.treasury as Address, hash };
+      if (ev.eventName === "TreasuryCreated") {
+        const treasury = ev.args.treasury as Address;
+        // watch it before its first proposal can land (the webhook also adds it, as a backstop)
+        await watchAddresses({ treasuries: [treasury] }).catch((e) => console.error("[quicknode] watch failed:", e?.message));
+        return { treasury, hash };
+      }
     } catch {}
   }
   throw new Error("TreasuryCreated event not found");
@@ -164,3 +184,33 @@ export async function treasuryState(treasury: Address) {
 
 export const availableAllowance = async (treasury: Address, agent: Address) =>
   fmt(await chain.readContract({ address: treasury, abi: companyTreasuryAbi, functionName: "availableAllowance", args: [agent] }));
+
+// ─────────────────────────── roles, pause, cancel (approver actions) ───────────────────────────
+
+export const setGuardian = (approverRef: string, treasury: Address, account: Address, enabled = true) =>
+  callFrom(approverRef, treasury, companyTreasuryAbi, "setGuardian", [account, enabled]);
+export const unpauseTreasury = (approverRef: string, treasury: Address) => callFrom(approverRef, treasury, companyTreasuryAbi, "unpause", []);
+export const cancelProposal = (ref: string, treasury: Address, id: bigint) => callFrom(ref, treasury, companyTreasuryAbi, "cancel", [id]);
+export const isPaused = (treasury: Address) => chain.readContract({ address: treasury, abi: companyTreasuryAbi, functionName: "paused" }) as Promise<boolean>;
+export const isGuardian = (treasury: Address, account: Address) =>
+  chain.readContract({ address: treasury, abi: companyTreasuryAbi, functionName: "isGuardian", args: [account] }) as Promise<boolean>;
+
+/** Get a Circle wallet by refId, creating it in our wallet set if it does not exist yet. */
+export async function ensureWallet(refId: string, name: string): Promise<WalletRef> {
+  const existing = wallets().find((x) => x.refId === refId);
+  if (existing) return existing;
+  const store = JSON.parse(readFileSync("data/wallets.local.json", "utf8")) as { walletSetId: string; wallets: WalletRef[] };
+  const res = await circle().createWallets({
+    walletSetId: store.walletSetId,
+    blockchains: ["ARC-TESTNET"],
+    count: 1,
+    accountType: "EOA",
+    metadata: [{ name, refId }],
+  });
+  const c = res.data!.wallets![0];
+  const w: WalletRef = { id: c.id!, address: c.address! as Address, refId, name };
+  store.wallets.push(w);
+  writeFileSync("data/wallets.local.json", JSON.stringify(store, null, 2));
+  await watchAddresses({ wallets: [w.address] }).catch(() => {});
+  return w;
+}
