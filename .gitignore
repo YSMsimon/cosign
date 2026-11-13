@@ -59,3 +59,6 @@ data/*.local.json
 contracts/out/
 contracts/cache/
 contracts/broadcast/
+
+# agent run logs (JSONL)
+logs/
