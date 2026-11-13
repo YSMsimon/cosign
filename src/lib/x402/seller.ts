@@ -1,8 +1,13 @@
 /**
- * Seller side of x402: protect a route with a price, settle through Circle Facilitator Service
- * (keyless trial on Arc testnet: authenticated by an EIP-712 "seller proof" signed by the payTo key).
+ * Seller side of x402 for our demo paid APIs. Every 402 offers two rails on Arc testnet:
+ *  1. Circle Gateway Nanopayments (GatewayWalletBatched): Circle's recommended seller default.
+ *     Gas-free, sub-cent, batch-settled. Verified + settled by Circle Gateway (BatchFacilitatorClient),
+ *     the same primitives as Circle's `createGatewayMiddleware`, adapted to Next.js route handlers.
+ *  2. Vanilla x402 `exact` (EIP-3009 on USDC): settled per payment by Circle Facilitator Service
+ *     (keyless trial: EIP-712 seller proof signed by the payTo key).
  * Server-only.
  */
+import { BatchFacilitatorClient } from "@circle-fin/x402-batching/server";
 import { keccak256, toBytes, toHex, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
@@ -11,12 +16,45 @@ import {
 } from "./shared";
 
 const FACILITATOR = "https://api.circle.com/v1/facilitator/x402";
+const GATEWAY_API_TESTNET = "https://gateway-api-testnet.circle.com";
+const ARC_GATEWAY_WALLET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
+const GATEWAY_MIN_VALIDITY = 604_800; // from Gateway /supported (minValiditySeconds) for Arc testnet
+
+const gateway = new BatchFacilitatorClient({ url: GATEWAY_API_TESTNET });
 
 function sellerAccount() {
   const pk = process.env.SELLER_PRIVATE_KEY as Hex | undefined;
   if (!pk) throw new Error("SELLER_PRIVATE_KEY missing");
   return privateKeyToAccount(pk);
 }
+
+// ───────────── requirements ─────────────
+
+export function gatewayRequirements(priceUsd: string): PaymentRequirements {
+  return {
+    scheme: "exact",
+    network: ARC_NETWORK,
+    amount: usdToAtomic(priceUsd),
+    asset: USDC_ADDRESS,
+    payTo: sellerAccount().address,
+    maxTimeoutSeconds: GATEWAY_MIN_VALIDITY + 100,
+    extra: { name: "GatewayWalletBatched", version: "1", verifyingContract: ARC_GATEWAY_WALLET },
+  };
+}
+
+export function vanillaRequirements(priceUsd: string): PaymentRequirements {
+  return {
+    scheme: "exact",
+    network: ARC_NETWORK,
+    amount: usdToAtomic(priceUsd),
+    asset: USDC_ADDRESS,
+    payTo: sellerAccount().address,
+    maxTimeoutSeconds: 60,
+    extra: { ...USDC_EIP712, assetTransferMethod: "eip3009" },
+  };
+}
+
+// ───────────── vanilla settlement (Circle Facilitator Service, keyless) ─────────────
 
 async function sellerProof(purpose: "verify" | "settle" | "status", method: string, body: string) {
   const account = sellerAccount();
@@ -53,31 +91,16 @@ async function sellerProof(purpose: "verify" | "settle" | "status", method: stri
   return Buffer.from(JSON.stringify(envelope)).toString("base64url");
 }
 
-export function requirementsFor(priceUsd: string): PaymentRequirements {
-  return {
-    scheme: "exact",
-    network: ARC_NETWORK,
-    amount: usdToAtomic(priceUsd),
-    asset: USDC_ADDRESS,
-    payTo: sellerAccount().address,
-    maxTimeoutSeconds: 60,
-    extra: { ...USDC_EIP712, assetTransferMethod: "eip3009" },
-  };
-}
-
-async function settle(paymentPayload: PaymentPayload, paymentRequirements: PaymentRequirements): Promise<SettlementResponse> {
-  const { extra, ...req } = paymentRequirements;
+async function settleVanilla(paymentPayload: PaymentPayload, req: PaymentRequirements): Promise<SettlementResponse> {
+  const { extra, ...rest } = req;
   const body = JSON.stringify({
     x402Version: X402_VERSION,
     paymentPayload,
-    paymentRequirements: { ...req, extra: { name: extra.name, version: extra.version } },
+    paymentRequirements: { ...rest, extra: { name: extra.name, version: extra.version } },
   });
   const res = await fetch(`${FACILITATOR}/settle`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Facilitator-Seller-Proof": await sellerProof("settle", "POST", body),
-    },
+    headers: { "Content-Type": "application/json", "Facilitator-Seller-Proof": await sellerProof("settle", "POST", body) },
     body,
   });
   const json = (await res.json().catch(() => ({}))) as SettlementResponse & { message?: string };
@@ -85,18 +108,33 @@ async function settle(paymentPayload: PaymentPayload, paymentRequirements: Payme
   return json;
 }
 
+// ───────────── gateway settlement (Circle Gateway, batched) ─────────────
+
+async function settleGateway(paymentPayload: PaymentPayload, req: PaymentRequirements): Promise<SettlementResponse> {
+  const v = (await gateway.verify(paymentPayload as never, req as never)) as { isValid?: boolean; invalidReason?: string };
+  if (!v.isValid) return { success: false, errorReason: `gateway_verify: ${v.invalidReason ?? "invalid"}` };
+  const s = (await gateway.settle(paymentPayload as never, req as never)) as SettlementResponse & { errorReason?: string };
+  return s;
+}
+
+// ───────────── route guard ─────────────
+
 /**
  * Guard a route handler with an x402 price. Returns either a 402 Response to send back,
- * or the settlement receipt once the buyer has paid.
+ * or the settlement receipt once the buyer has paid (on either rail).
  */
 export async function requirePayment(
   req: Request,
   opts: { priceUsd: string; description: string },
-): Promise<{ paid: false; response: Response } | { paid: true; receipt: SettlementResponse; headers: HeadersInit }> {
-  const requirements = requirementsFor(opts.priceUsd);
+): Promise<
+  | { paid: false; response: Response }
+  | { paid: true; rail: "gateway" | "vanilla"; receipt: SettlementResponse; headers: HeadersInit }
+> {
+  const gatewayReq = gatewayRequirements(opts.priceUsd);
+  const vanillaReq = vanillaRequirements(opts.priceUsd);
   const resource: Resource = { url: req.url, description: opts.description, mimeType: "application/json" };
   const challenge = (error?: string) => {
-    const body: PaymentRequired = { x402Version: X402_VERSION, error, resource, accepts: [requirements] };
+    const body: PaymentRequired = { x402Version: X402_VERSION, error, resource, accepts: [gatewayReq, vanillaReq] };
     return new Response(JSON.stringify(body), {
       status: 402,
       headers: { "Content-Type": "application/json", "PAYMENT-REQUIRED": encodeHeader(body) },
@@ -112,18 +150,20 @@ export async function requirePayment(
   } catch {
     return { paid: false, response: challenge("malformed PAYMENT-SIGNATURE") };
   }
+
+  const rail: "gateway" | "vanilla" = payload.accepted?.extra?.name === "GatewayWalletBatched" ? "gateway" : "vanilla";
+  const expected = rail === "gateway" ? gatewayReq : vanillaReq;
   const a = payload.payload?.authorization;
   if (
     !a ||
-    payload.accepted?.scheme !== "exact" ||
     payload.accepted?.network !== ARC_NETWORK ||
-    a.to.toLowerCase() !== requirements.payTo.toLowerCase() ||
-    BigInt(a.value) < BigInt(requirements.amount)
+    payload.accepted?.payTo?.toLowerCase() !== expected.payTo.toLowerCase() ||
+    BigInt(a.value) < BigInt(expected.amount)
   ) {
     return { paid: false, response: challenge("payment does not match requirements") };
   }
 
-  const receipt = await settle(payload, requirements);
+  const receipt = rail === "gateway" ? await settleGateway(payload, expected) : await settleVanilla(payload, expected);
   if (!receipt.success) return { paid: false, response: challenge(`settlement failed: ${receipt.errorReason}`) };
-  return { paid: true, receipt, headers: { "PAYMENT-RESPONSE": encodeHeader(receipt) } };
+  return { paid: true, rail, receipt, headers: { "PAYMENT-RESPONSE": encodeHeader(receipt) } };
 }
