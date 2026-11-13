@@ -19,6 +19,7 @@ import {
 import { readFileSync, writeFileSync } from "node:fs";
 import { companyTreasuryAbi, treasuryFactoryAbi, TREASURY_FACTORY_ADDRESS } from "./contracts/abis";
 import { watchAddresses } from "./quicknode/kv";
+import { sqlite } from "./db";
 
 const env = (k: string) => {
   const v = process.env[k];
@@ -48,14 +49,47 @@ export const circle = () =>
   }));
 
 export type WalletRef = { id: string; address: Address; refId: string; name?: string };
+/** Demo and script wallets (data/wallets.local.json). Agents created through the API live in the database. */
 export function wallets(): WalletRef[] {
   return JSON.parse(readFileSync("data/wallets.local.json", "utf8")).wallets;
 }
+function agentWalletFromDb(refId: string): WalletRef | undefined {
+  try {
+    const row = sqlite().prepare("SELECT wallet_id, wallet_address, name FROM agents WHERE ref = ?").get(refId) as
+      | { wallet_id: string; wallet_address: string; name: string }
+      | undefined;
+    return row && { id: row.wallet_id, address: row.wallet_address as Address, refId, name: row.name };
+  } catch {
+    return undefined;
+  }
+}
+export function findWallet(refId: string): WalletRef | undefined {
+  return wallets().find((x) => x.refId === refId) ?? agentWalletFromDb(refId);
+}
 export function wallet(refId: string): WalletRef {
-  const w = wallets().find((x) => x.refId === refId);
+  const w = findWallet(refId);
   if (!w) throw new Error(`no Circle wallet with refId "${refId}"`);
   return w;
 }
+
+/** Create a Circle developer-controlled EOA on Arc testnet in our wallet set (no local file write). */
+export async function createCircleWallet(refId: string, name: string): Promise<WalletRef> {
+  const store = JSON.parse(readFileSync("data/wallets.local.json", "utf8")) as { walletSetId: string };
+  const res = await circle().createWallets({
+    walletSetId: store.walletSetId,
+    blockchains: ["ARC-TESTNET"],
+    count: 1,
+    accountType: "EOA",
+    metadata: [{ name: name.replace(/[(),]/g, "").slice(0, 50) || refId, refId }], // Circle rejects ( ) , in names
+  });
+  const c = res.data!.wallets![0];
+  const w: WalletRef = { id: c.id!, address: c.address! as Address, refId, name };
+  await watchAddresses({ wallets: [w.address] }).catch(() => {});
+  return w;
+}
+
+/** Native USDC balance (18 decimals on Arc), for gas checks. */
+export const nativeBalance = (a: Address) => chain.getBalance({ address: a });
 
 export const usd = (n: number | string) => parseUnits(String(n), USDC_DECIMALS);
 export const fmt = (v: bigint) => formatUnits(v, USDC_DECIMALS);
@@ -222,18 +256,9 @@ export const isGuardian = (treasury: Address, account: Address) =>
 export async function ensureWallet(refId: string, name: string): Promise<WalletRef> {
   const existing = wallets().find((x) => x.refId === refId);
   if (existing) return existing;
+  const w = await createCircleWallet(refId, name);
   const store = JSON.parse(readFileSync("data/wallets.local.json", "utf8")) as { walletSetId: string; wallets: WalletRef[] };
-  const res = await circle().createWallets({
-    walletSetId: store.walletSetId,
-    blockchains: ["ARC-TESTNET"],
-    count: 1,
-    accountType: "EOA",
-    metadata: [{ name, refId }],
-  });
-  const c = res.data!.wallets![0];
-  const w: WalletRef = { id: c.id!, address: c.address! as Address, refId, name };
   store.wallets.push(w);
   writeFileSync("data/wallets.local.json", JSON.stringify(store, null, 2));
-  await watchAddresses({ wallets: [w.address] }).catch(() => {});
   return w;
 }

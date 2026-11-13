@@ -7,7 +7,7 @@ import { explorerTx, fmt, usdcBalance, wallet } from "../src/lib/arc";
 import { paidFetch, PolicyRefusal } from "../src/lib/x402/buyer";
 
 const BASE = process.env.APP_URL ?? "http://localhost:3000";
-const policy = { maxPerCallUsd: 0.05, allowedHosts: ["localhost"] };
+const policy = { maxPerCallUsd: 0.05, allowedHosts: [`${new URL(BASE).host}/api/sellers`] };
 
 (async () => {
   const clerk = wallet("agent-ap-clerk");

@@ -7,8 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:unit": "tsx --test tests/unit/*.test.ts",
+    "test:e2e": "tsx --env-file=.env.local --test --test-concurrency=1 tests/e2e/*.test.ts",
+    "test": "pnpm test:unit && pnpm test:e2e",
     "agent": "tsx --env-file=.env.local scripts/agent.ts",
-    "cosign": "tsx --env-file=.env.local scripts/cosign.ts"
+    "cosign": "tsx --env-file=.env.local scripts/cosign.ts",
+    "grokbot": "tsx --env-file=.env.local scripts/grokbot.ts"
   },
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "^10.8.1",

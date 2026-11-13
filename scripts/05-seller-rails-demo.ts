@@ -11,7 +11,7 @@ import { gatewayBalance } from "../src/lib/x402/gateway";
 import { decodeHeader, type PaymentRequired } from "../src/lib/x402/shared";
 
 const BASE = process.env.APP_URL ?? "http://localhost:3000";
-const policy = { maxPerCallUsd: 0.05, allowedHosts: ["localhost"] };
+const policy = { maxPerCallUsd: 0.05, allowedHosts: [`${new URL(BASE).host}/api/sellers`] };
 
 (async () => {
   const clerk = wallet("agent-ap-clerk");

@@ -11,6 +11,7 @@
  */
 import { toHex } from "viem";
 import { circle, wallet } from "../arc";
+import { sellerAllowed } from "../agent/rules";
 import { batchSchemeFor, gatewayBalance } from "./gateway";
 import {
   ARC_CHAIN_ID, ARC_NETWORK, X402_VERSION, atomicToUsd, decodeHeader, encodeHeader,
@@ -19,8 +20,10 @@ import {
 
 export type PaidFetchPolicy = {
   maxPerCallUsd: number; // refuse anything pricier
-  allowedHosts?: string[]; // seller allowlist (hostnames); undefined = allow all
+  allowedHosts?: string[]; // seller allowlist ("host[:port][/path]", see sellerAllowed); undefined = allow all
   preferGateway?: boolean; // default true
+  /** Last check before signing, with the real price (budgets, speed limit, ask-a-person). Throw PolicyRefusal / NeedsApproval to stop. */
+  beforeSign?: (q: { priceUsd: number; host: string; payTo: string; url: string }) => Promise<void> | void;
 };
 
 export type PaidFetchResult = {
@@ -37,12 +40,24 @@ export type PaidFetchResult = {
 };
 
 export class PolicyRefusal extends Error {}
+/** The purchase is above the agent's ask-a-person line: a member must OK it first. */
+export class NeedsApproval extends PolicyRefusal {
+  constructor(public requestId: string, message: string) {
+    super(message);
+  }
+}
 
 const isGateway = (r: PaymentRequirements) => r.network === ARC_NETWORK && r.extra?.name === "GatewayWalletBatched";
 const isVanilla = (r: PaymentRequirements) => r.network === ARC_NETWORK && r.scheme === "exact" && !isGateway(r);
 
 export async function paidFetch(agentRef: string, url: string, policy: PaidFetchPolicy, init?: RequestInit): Promise<PaidFetchResult> {
-  const first = await fetch(url, init);
+  if (policy.allowedHosts) {
+    const m = sellerAllowed(policy.allowedHosts, url);
+    if (!m.ok) throw new PolicyRefusal(m.reason);
+  }
+  // Redirects are returned, not followed: the agent may call the new URL, which is checked again.
+  const first = await fetch(url, { ...init, redirect: "manual" });
+  if (first.status >= 300 && first.status < 400) return { status: first.status, data: { redirect: first.headers.get("location") }, paid: null };
   if (first.status !== 402) return { status: first.status, data: await safeJson(first), paid: null };
 
   const header = first.headers.get("payment-required");
@@ -53,7 +68,6 @@ export async function paidFetch(agentRef: string, url: string, policy: PaidFetch
 
   // ── policy check BEFORE anything is signed ──
   const host = new URL(url).hostname;
-  if (policy.allowedHosts && !policy.allowedHosts.includes(host)) throw new PolicyRefusal(`seller ${host} is not on the allowlist`);
 
   const agent = wallet(agentRef);
   let rail: "gateway" | "vanilla";
@@ -69,6 +83,7 @@ export async function paidFetch(agentRef: string, url: string, policy: PaidFetch
   }
   const priceUsd = atomicToUsd(req.amount);
   if (Number(priceUsd) > policy.maxPerCallUsd) throw new PolicyRefusal(`price $${priceUsd} exceeds per-call cap $${policy.maxPerCallUsd}`);
+  await policy.beforeSign?.({ priceUsd: Number(priceUsd), host, payTo: req.payTo, url });
 
   // ── sign ──
   let headerValue: string;
@@ -89,7 +104,7 @@ export async function paidFetch(agentRef: string, url: string, policy: PaidFetch
     headerValue = encodeHeader(payload);
   }
 
-  const second = await fetch(url, { ...init, headers: { ...(init?.headers ?? {}), "PAYMENT-SIGNATURE": headerValue } });
+  const second = await fetch(url, { ...init, redirect: "manual", headers: { ...(init?.headers ?? {}), "PAYMENT-SIGNATURE": headerValue } });
   const receiptHeader = second.headers.get("payment-response");
   const receipt = receiptHeader ? decodeHeader<SettlementResponse>(receiptHeader) : undefined;
   return {

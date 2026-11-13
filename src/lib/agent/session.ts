@@ -6,7 +6,7 @@
  * Stored on the host OUTSIDE the microVM mounts (~/.cosign/sandboxes/<agent>/session.json),
  * so the agent cannot read or edit its own session file. Server-only.
  */
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sandboxPaths } from "../sandbox";
 
@@ -23,6 +23,7 @@ export type LedgerEntry = { t: string; tool: string; detail: Record<string, unkn
 
 export type Session = {
   agent: string;
+  thread?: string; // one conversation per person (team agents) or per schedule; memory stays shared per agent
   createdAt: string;
   chainId: string; // changes whenever a new response chain starts (first run, after compaction)
   lastResponseId?: string; // xAI previous_response_id for continuing the chain
@@ -37,11 +38,18 @@ export type Session = {
   ledger: LedgerEntry[]; // money facts, pinned verbatim through compaction
 };
 
-const fileFor = (agent: string) => join(sandboxPaths(agent).base, "session.json");
+const THREAD = /^[a-z0-9][a-z0-9_-]{0,60}$/;
+function fileFor(agent: string, thread?: string) {
+  const base = sandboxPaths(agent).base;
+  if (!thread) return join(base, "session.json");
+  if (!THREAD.test(thread)) throw new Error(`bad thread "${thread}"`);
+  mkdirSync(join(base, "sessions"), { recursive: true });
+  return join(base, "sessions", `${thread}.json`);
+}
 const newChainId = () => Math.random().toString(36).slice(2, 10);
 
-export function loadSession(agent: string, compactAt = DEFAULT_COMPACT_AT): Session {
-  const f = fileFor(agent);
+export function loadSession(agent: string, compactAt = DEFAULT_COMPACT_AT, thread?: string): Session {
+  const f = fileFor(agent, thread);
   if (existsSync(f)) {
     const s = JSON.parse(readFileSync(f, "utf8")) as Session;
     s.compactAt = compactAt;
@@ -49,6 +57,7 @@ export function loadSession(agent: string, compactAt = DEFAULT_COMPACT_AT): Sess
   }
   return {
     agent,
+    thread,
     createdAt: new Date().toISOString(),
     chainId: newChainId(),
     lastContextTokens: 0,
@@ -61,7 +70,7 @@ export function loadSession(agent: string, compactAt = DEFAULT_COMPACT_AT): Sess
 }
 
 export function saveSession(s: Session) {
-  const f = fileFor(s.agent);
+  const f = fileFor(s.agent, s.thread);
   writeFileSync(`${f}.tmp`, JSON.stringify(s, null, 2));
   renameSync(`${f}.tmp`, f); // atomic replace
 }

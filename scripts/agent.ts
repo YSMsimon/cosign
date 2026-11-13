@@ -32,7 +32,7 @@ const policyMd = (p: AgentPolicy, extra: string[]) =>
   ["# Nova Labs payment policy", "- Agents draft; humans cosign. Never claim a payment is done until it is approved.", ...extra,
    `- Per-call API spend cap: $${p.maxPerCallUsd}. Max draft: $${p.maxProposalUsd}. Max petty-cash top-up: $${p.maxTopUpUsd}.`].join("\n") + "\n";
 
-const clerkPolicy: AgentPolicy = { maxPerCallUsd: 0.05, allowedHosts: ["localhost", "x402.quicknode.com"], maxProposalUsd: 5, allowedPayees: [LENA], maxTopUpUsd: 1, sandbox: true };
+const clerkPolicy: AgentPolicy = { maxPerCallUsd: 0.05, allowedHosts: ["localhost:3000/api/sellers", "x402.quicknode.com"], maxProposalUsd: 5, allowedPayees: [LENA], maxTopUpUsd: 1, sandbox: true };
 const auditorPolicy: AgentPolicy = { maxPerCallUsd: 0, allowedHosts: [], maxProposalUsd: 0, allowedPayees: [], maxTopUpUsd: 0, sandbox: true };
 
 const PROFILES: Record<string, Profile> = {

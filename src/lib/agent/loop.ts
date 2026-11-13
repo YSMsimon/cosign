@@ -14,7 +14,7 @@
 import { createRunLogger, type RunEventHandler, type RunLogger } from "../log";
 import { rebuildIndex } from "./memory";
 import { DEFAULT_COMPACT_AT, loadSession, now, saveSession, shouldCompact, startNewChain, type Session } from "./session";
-import { toolByName, xaiTools, type AgentContext } from "./tools";
+import { runToolChecked, toolByName, xaiTools, type AgentContext } from "./tools";
 
 const XAI = "https://api.x.ai/v1/responses";
 const PRICE = { in: 1.25, cachedIn: 0.2, out: 2.5, searchPer1k: 5 }; // rough list prices, USD
@@ -133,17 +133,18 @@ export async function runAgentTurn(opts: {
   compactAt?: number;
   quiet?: boolean;
   onEvent?: RunEventHandler; // live tool calls / results for a terminal or UI
+  thread?: string; // separate conversation (per person on a team agent, per schedule); memory stays shared
 }) {
   const model = opts.model ?? "grok-4.3";
   const maxSteps = opts.maxSteps ?? 16;
   const agent = opts.ctx.agentRef;
-  const s = loadSession(agent, opts.compactAt ?? DEFAULT_COMPACT_AT);
+  const s = loadSession(agent, opts.compactAt ?? DEFAULT_COMPACT_AT, opts.thread);
   s.runs += 1;
   const log = createRunLogger(
-    { agent, kind: "agent-turn", model, prompt: opts.prompt, run: s.runs, chain: s.chainId, contextTokens: s.lastContextTokens, compactAt: s.compactAt, compactions: s.compactions },
+    { agent, thread: opts.thread ?? null, scope: opts.ctx.scope ?? null, kind: "agent-turn", model, prompt: opts.prompt, run: s.runs, chain: s.chainId, contextTokens: s.lastContextTokens, compactAt: s.compactAt, compactions: s.compactions },
     { quiet: opts.quiet, onEvent: opts.onEvent },
   );
-  const tools = xaiTools(opts.ctx.policy);
+  const tools = xaiTools(opts.ctx);
   const totals = { in: 0, cached: 0, out: 0, webSearches: 0, xSearches: 0, toolCalls: 0, refusals: 0, compactions: 0 };
 
   // memory index: shown at the start of a chain, and again whenever it changed
@@ -242,33 +243,19 @@ export async function runAgentTurn(opts: {
         } catch {
           /* tool validates */
         }
-        const tool = toolByName.get(call.name);
-        let output: unknown;
         const t0 = Date.now();
-        if (!tool) {
-          output = { error: `unknown tool ${call.name}` };
-          log.event("tool_error", { tool: call.name, error: "unknown tool" });
-        } else if (tool.kind === "sandbox" && !opts.ctx.policy.sandbox) {
-          output = { refused: true, reason: "sandbox tools are disabled for this agent" };
+        const tool = toolByName.get(call.name);
+        log.event("tool_call", { tool: call.name, kind: tool?.kind, args });
+        const res = await runToolChecked(opts.ctx, call.name, args);
+        const output = res.output;
+        if (res.status === "refused") {
           totals.refusals++;
-          log.event("policy_refused", { tool: call.name, args, reason: "sandbox disabled" });
+          log.event("policy_refused", { tool: call.name, args, reason: res.reason });
+        } else if (res.status === "error") {
+          log.event("tool_error", { tool: call.name, durationMs: Date.now() - t0, error: res.error });
         } else {
-          const refusal = tool.check?.(opts.ctx, args) ?? null;
-          if (refusal) {
-            output = { refused: true, reason: refusal };
-            totals.refusals++;
-            log.event("policy_refused", { tool: call.name, args, reason: refusal });
-          } else {
-            log.event("tool_call", { tool: call.name, kind: tool.kind, args });
-            try {
-              output = await tool.run(opts.ctx, args);
-              log.event("tool_result", { tool: call.name, durationMs: Date.now() - t0, result: output });
-              if (tool.kind === "money") s.ledger.push({ t: now(), tool: call.name, detail: { args, result: output as Record<string, unknown> } });
-            } catch (e) {
-              output = { error: (e as Error).message };
-              log.event("tool_error", { tool: call.name, durationMs: Date.now() - t0, error: (e as Error).message });
-            }
-          }
+          log.event("tool_result", { tool: call.name, durationMs: Date.now() - t0, result: output });
+          if (res.kind === "money") s.ledger.push({ t: now(), tool: call.name, detail: { args, result: output as Record<string, unknown> } });
         }
         const outStr = JSON.stringify(output);
         outputs.push({ call_id: call.call_id, name: call.name, output: outStr });

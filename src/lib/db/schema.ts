@@ -35,3 +35,202 @@ export const webhookDeliveries = sqliteTable("webhook_deliveries", {
 export type ActivityRow = typeof activity.$inferSelect;
 export type NewActivity = typeof activity.$inferInsert;
 
+
+// ───────────── people and workspaces ─────────────
+
+/** Anyone who has signed in with a wallet (address = lowercase). */
+export const users = sqliteTable("users", {
+  address: text("address").primaryKey(),
+  createdAt: text("created_at").notNull(),
+  lastLoginAt: text("last_login_at"),
+});
+
+/** One-time SIWE nonces (10-minute life). */
+export const authNonces = sqliteTable("auth_nonces", {
+  nonce: text("nonce").primaryKey(),
+  createdAt: text("created_at").notNull(),
+  usedAt: text("used_at"),
+});
+
+/** Signed-in sessions; the cookie holds a random token, we store only its hash. */
+export const authSessions = sqliteTable("auth_sessions", {
+  tokenHash: text("token_hash").primaryKey(),
+  address: text("address").notNull(),
+  createdAt: text("created_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+});
+
+/** A company: one workspace per treasury contract. */
+export const workspaces = sqliteTable("workspaces", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  treasury: text("treasury").notNull().unique(), // lowercase
+  createdBy: text("created_by").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const roles = sqliteTable(
+  "roles",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    key: text("key"), // all_access | approver | null (member-level)
+    name: text("name").notNull(),
+    permissions: text("permissions").notNull(), // JSON string[]
+    system: integer("system").notNull().default(0),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("roles_ws_name").on(t.workspaceId, t.name)],
+);
+
+/** A wallet address invited to a workspace. Access starts the first time that wallet signs in. */
+export const members = sqliteTable(
+  "members",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    address: text("address").notNull(), // lowercase
+    roleId: text("role_id").notNull(),
+    title: text("title"),
+    invitedBy: text("invited_by"),
+    createdAt: text("created_at").notNull(),
+    joinedAt: text("joined_at"),
+  },
+  (t) => [uniqueIndex("members_ws_addr").on(t.workspaceId, t.address)],
+);
+
+/** Saved payees (the address book). Agents may only draft to the ones their controls allow. */
+export const contacts = sqliteTable(
+  "contacts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    name: text("name").notNull(),
+    address: text("address").notNull(), // lowercase
+    notes: text("notes"),
+    createdBy: text("created_by"),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("contacts_ws_addr").on(t.workspaceId, t.address)],
+);
+
+// ───────────── agents ─────────────
+
+export const agents = sqliteTable("agents", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  name: text("name").notNull(),
+  prompt: text("prompt").notNull(), // its job description (static, cached)
+  visibility: text("visibility").notNull(), // private | team
+  allowedRoleIds: text("allowed_role_ids"), // JSON string[] | null (team agents)
+  ownerMemberId: text("owner_member_id").notNull(),
+  abilities: text("abilities").notNull(), // JSON Abilities
+  controls: text("controls").notNull(), // JSON Controls
+  ref: text("ref").notNull().unique(), // microVM / sandbox / Circle wallet refId
+  walletId: text("wallet_id").notNull(),
+  walletAddress: text("wallet_address").notNull(), // lowercase
+  status: text("status").notNull().default("active"), // active | retired
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+/** Money an agent moved or drafted, for budgets and the speed limit. */
+export const agentSpend = sqliteTable("agent_spend", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  agentId: text("agent_id").notNull(),
+  kind: text("kind").notNull(), // purchase | draft | topup
+  amountUsd: text("amount_usd").notNull(),
+  ref: text("ref"), // URL, proposal id or tx hash
+  memberId: text("member_id"),
+  taskId: text("task_id"),
+  createdAt: text("created_at").notNull(),
+});
+
+/** "Ask a person above $X": a purchase waiting for a member's OK. */
+export const approvalRequests = sqliteTable("approval_requests", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  agentId: text("agent_id").notNull(),
+  requestedBy: text("requested_by"), // member id (or null for schedules without a member)
+  kind: text("kind").notNull(), // purchase
+  url: text("url").notNull(),
+  host: text("host").notNull(),
+  amountUsd: text("amount_usd").notNull(),
+  status: text("status").notNull(), // pending | approved | denied | used
+  decidedBy: text("decided_by"),
+  decidedAt: text("decided_at"),
+  createdAt: text("created_at").notNull(),
+});
+
+/** Who asked for an onchain draft, and through which agent / task. */
+export const proposalMeta = sqliteTable(
+  "proposal_meta",
+  {
+    treasury: text("treasury").notNull(),
+    proposalId: text("proposal_id").notNull(),
+    agentId: text("agent_id"),
+    requestedBy: text("requested_by"),
+    taskId: text("task_id"),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("proposal_meta_pk").on(t.treasury, t.proposalId)],
+);
+
+// ───────────── Grok Bot and schedules ─────────────
+
+export const grokbotConnections = sqliteTable("grokbot_connections", {
+  id: text("id").primaryKey(),
+  agentId: text("agent_id").notNull().unique(),
+  webhookUrl: text("webhook_url").notNull(),
+  webhookKeyEnc: text("webhook_key_enc").notNull(), // AES-GCM with COSIGN_SECRET
+  status: text("status").notNull(), // pending | connected | failed
+  lastError: text("last_error"),
+  connectedAt: text("connected_at"),
+  createdBy: text("created_by"),
+  createdAt: text("created_at").notNull(),
+});
+
+/** One unit of background work for Grok Bot (or our own loop when no Bot is connected). */
+export const tasks = sqliteTable("tasks", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  agentId: text("agent_id").notNull(),
+  kind: text("kind").notNull(), // ping | task
+  source: text("source").notNull(), // connect | member | schedule
+  engine: text("engine").notNull(), // grokbot | cosign
+  instructions: text("instructions").notNull(),
+  status: text("status").notNull(), // queued | sent | acked | working | done | failed
+  tokenHash: text("token_hash"),
+  tokenExpiresAt: text("token_expires_at"),
+  requestedBy: text("requested_by"), // member id
+  scheduleId: text("schedule_id"),
+  progress: text("progress").notNull().default("[]"), // JSON [{t, message}]
+  result: text("result"),
+  error: text("error"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const schedules = sqliteTable("schedules", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  agentId: text("agent_id").notNull(),
+  name: text("name").notNull(),
+  instructions: text("instructions").notNull(),
+  spec: text("spec").notNull(), // JSON ScheduleSpec (UTC)
+  nextRunAt: text("next_run_at").notNull(),
+  lastRunAt: text("last_run_at"),
+  enabled: integer("enabled").notNull().default(1),
+  createdBy: text("created_by").notNull(), // member id; runs use this member's rights
+  createdAt: text("created_at").notNull(),
+});
+
+export type WorkspaceRow = typeof workspaces.$inferSelect;
+export type RoleRow = typeof roles.$inferSelect;
+export type MemberRow = typeof members.$inferSelect;
+export type ContactRow = typeof contacts.$inferSelect;
+export type AgentRow = typeof agents.$inferSelect;
+export type ApprovalRow = typeof approvalRequests.$inferSelect;
+export type ConnectionRow = typeof grokbotConnections.$inferSelect;
+export type TaskRow = typeof tasks.$inferSelect;
+export type ScheduleRow = typeof schedules.$inferSelect;

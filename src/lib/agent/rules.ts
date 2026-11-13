@@ -1,0 +1,239 @@
+/**
+ * What an agent may do (abilities) and the seven wallet controls (pure: no database, no network).
+ * Stored per agent in SQLite; checked by our server before Circle signs anything. Onchain, the
+ * contract still decides who may draft, the weekly petty-cash ceiling, cosigning and pause.
+ */
+import { isAddress, type Address } from "viem";
+import type { AgentPolicy } from "./tools";
+
+export type Abilities = {
+  sandbox: boolean; // its own microVM (files, scripts)
+  buy: boolean; // pay for API data from its own wallet (x402 / Gateway nanopayments)
+  draft: boolean; // draft treasury payments (onchain proposer role); a human always cosigns
+  pettyCash: boolean; // draw petty cash from the treasury (onchain weekly allowance)
+};
+
+export type Limits = { perPayment: number | null; daily: number | null; weekly: number | null; monthly: number | null };
+
+export type Controls = {
+  purchases: Limits; // 1 + 2: per-payment cap and rolling budgets for the agent's own purchases
+  drafts: Limits; // 1 + 2: the same for treasury drafts
+  maxPaymentsPerHour: number | null; // 3: speed limit across purchases and drafts
+  allowedSellers: string[]; // 4: sellers it may call, "host[:port][/path]" (everything else blocked)
+  allowedPayees: string[]; // 4: addresses it may draft to (everything else blocked)
+  askAboveUsd: number | null; // 5: purchases above this wait for a member's OK
+  topUpMaxUsd: number | null; // per petty-cash request (the onchain weekly allowance is the hard ceiling)
+  pettyCashPerWeekUsd: number | null; // the onchain weekly allowance an approver should set
+  frozen: boolean; // 6: money abilities off now
+  expiresAt: string | null; // 6: money abilities switch off after this time (ISO)
+};
+
+export type AgentRules = { abilities: Abilities; controls: Controls };
+
+export const PRESETS: Record<"readonly" | "buyer" | "clerk", Abilities> = {
+  readonly: { sandbox: true, buy: false, draft: false, pettyCash: false },
+  buyer: { sandbox: true, buy: true, draft: false, pettyCash: false },
+  clerk: { sandbox: true, buy: true, draft: true, pettyCash: true },
+};
+
+export const DEFAULT_CONTROLS: Controls = {
+  purchases: { perPayment: 0.05, daily: 0.5, weekly: 2, monthly: 5 },
+  drafts: { perPayment: 5, daily: 20, weekly: 50, monthly: 100 },
+  maxPaymentsPerHour: 10,
+  allowedSellers: [],
+  allowedPayees: [],
+  askAboveUsd: null,
+  topUpMaxUsd: 1,
+  pettyCashPerWeekUsd: 2,
+  frozen: false,
+  expiresAt: null,
+};
+
+export class RulesError extends Error {}
+
+const nn = (v: unknown, field: string): number | null => {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) throw new RulesError(`${field} must be a number ≥ 0 or null`);
+  return n;
+};
+
+function limits(v: unknown, field: string, base: Limits): Limits {
+  const o = (v ?? {}) as Partial<Limits>;
+  const l: Limits = {
+    perPayment: "perPayment" in o ? nn(o.perPayment, `${field}.perPayment`) : base.perPayment,
+    daily: "daily" in o ? nn(o.daily, `${field}.daily`) : base.daily,
+    weekly: "weekly" in o ? nn(o.weekly, `${field}.weekly`) : base.weekly,
+    monthly: "monthly" in o ? nn(o.monthly, `${field}.monthly`) : base.monthly,
+  };
+  // caps must nest: per-payment ≤ daily ≤ weekly ≤ monthly (unset ones are skipped)
+  const chain = [l.perPayment, l.daily, l.weekly, l.monthly];
+  let prev: number | null = null;
+  for (const x of chain) {
+    if (x === null) continue;
+    if (prev !== null && x < prev) throw new RulesError(`${field}: caps must nest (per-payment ≤ daily ≤ weekly ≤ monthly)`);
+    prev = x;
+  }
+  return l;
+}
+
+const SELLER_RE = /^[a-z0-9.-]+(:\d{1,5})?(\/[A-Za-z0-9._~\/-]*)?$/;
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** "LocalHost:3000/api/sellers/" -> "localhost:3000/api/sellers" (host lowercased, path kept, no trailing slash). */
+export function normalizeSeller(entry: string): string {
+  const e = entry.trim().replace(/^https?:\/\//i, "");
+  const i = e.indexOf("/");
+  const host = (i < 0 ? e : e.slice(0, i)).toLowerCase();
+  const path = i < 0 ? "" : e.slice(i).replace(/\/+$/, "");
+  return host + path;
+}
+
+/**
+ * Is this URL on the seller allowlist? An entry names a host, optionally a port and a path prefix:
+ * "x402.quicknode.com" (default port only), "localhost:3000" (that port only),
+ * "localhost:3000/api/sellers" (that port, under that path). A bare host never matches another port,
+ * so allowing one local service never opens the rest of the machine. Plain http only for loopback.
+ */
+export function sellerAllowed(entries: string[], url: string): { ok: true } | { ok: false; reason: string } {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return { ok: false, reason: "invalid URL" };
+  }
+  if (u.username || u.password) return { ok: false, reason: "URLs with credentials are not allowed" };
+  if (u.protocol !== "https:" && !(u.protocol === "http:" && LOOPBACK.has(u.hostname))) return { ok: false, reason: "only https URLs (http only for local demo APIs)" };
+  const host = u.host.toLowerCase();
+  for (const raw of entries) {
+    const e = normalizeSeller(raw);
+    const i = e.indexOf("/");
+    const eHost = i < 0 ? e : e.slice(0, i);
+    const ePath = i < 0 ? "" : e.slice(i);
+    if (eHost !== host) continue;
+    if (!ePath || u.pathname === ePath || u.pathname.startsWith(`${ePath}/`)) return { ok: true };
+  }
+  return { ok: false, reason: `${host}${u.pathname} is not on this agent's seller allowlist` };
+}
+
+/** Merge a partial update onto current controls and validate the result. */
+export function mergeControls(current: Controls, patch: unknown): Controls {
+  const p = (patch ?? {}) as Partial<Controls>;
+  const hosts = (v: unknown) => {
+    if (!Array.isArray(v)) throw new RulesError("allowedSellers must be a list of sellers (host[:port][/path])");
+    return [...new Set(v.map((h) => normalizeSeller(String(h))))].filter((h) => {
+      if (!SELLER_RE.test(h)) throw new RulesError(`bad seller "${h}" (use host, host:port or host:port/path)`);
+      return true;
+    });
+  };
+  const addrs = (v: unknown) => {
+    if (!Array.isArray(v)) throw new RulesError("allowedPayees must be a list of addresses");
+    return [...new Set(v.map((a) => String(a).trim().toLowerCase()))].filter((a) => {
+      if (!isAddress(a)) throw new RulesError(`bad payee address "${a}"`);
+      return true;
+    });
+  };
+  let expiresAt = current.expiresAt;
+  if ("expiresAt" in p) {
+    if (p.expiresAt === null) expiresAt = null;
+    else {
+      const t = Date.parse(String(p.expiresAt));
+      if (!Number.isFinite(t)) throw new RulesError("expiresAt must be an ISO date or null");
+      expiresAt = new Date(t).toISOString();
+    }
+  }
+  return {
+    purchases: limits(p.purchases, "purchases", current.purchases),
+    drafts: limits(p.drafts, "drafts", current.drafts),
+    maxPaymentsPerHour: "maxPaymentsPerHour" in p ? nn(p.maxPaymentsPerHour, "maxPaymentsPerHour") : current.maxPaymentsPerHour,
+    allowedSellers: "allowedSellers" in p ? hosts(p.allowedSellers) : current.allowedSellers,
+    allowedPayees: "allowedPayees" in p ? addrs(p.allowedPayees) : current.allowedPayees,
+    askAboveUsd: "askAboveUsd" in p ? nn(p.askAboveUsd, "askAboveUsd") : current.askAboveUsd,
+    topUpMaxUsd: "topUpMaxUsd" in p ? nn(p.topUpMaxUsd, "topUpMaxUsd") : current.topUpMaxUsd,
+    pettyCashPerWeekUsd: "pettyCashPerWeekUsd" in p ? nn(p.pettyCashPerWeekUsd, "pettyCashPerWeekUsd") : current.pettyCashPerWeekUsd,
+    frozen: "frozen" in p ? Boolean(p.frozen) : current.frozen,
+    expiresAt,
+  };
+}
+
+export function mergeAbilities(current: Abilities, patch: unknown): Abilities {
+  const p = (patch ?? {}) as Partial<Abilities>;
+  const b = (k: keyof Abilities) => (k in p ? Boolean(p[k]) : current[k]);
+  return { sandbox: b("sandbox"), buy: b("buy"), draft: b("draft"), pettyCash: b("pettyCash") };
+}
+
+/** Does going from `a` to `b` give the agent more room? (Loosening needs All access.) */
+export function loosens(a: AgentRules, b: AgentRules): string[] {
+  const why: string[] = [];
+  for (const k of ["sandbox", "buy", "draft", "pettyCash"] as const) if (!a.abilities[k] && b.abilities[k]) why.push(`turns on ${k}`);
+  const cap = (x: number | null, y: number | null, name: string) => {
+    if (x !== null && (y === null || y > x)) why.push(`raises ${name}`);
+  };
+  for (const kind of ["purchases", "drafts"] as const)
+    for (const k of ["perPayment", "daily", "weekly", "monthly"] as const) cap(a.controls[kind][k], b.controls[kind][k], `${kind}.${k}`);
+  cap(a.controls.maxPaymentsPerHour, b.controls.maxPaymentsPerHour, "maxPaymentsPerHour");
+  cap(a.controls.askAboveUsd, b.controls.askAboveUsd, "askAboveUsd");
+  cap(a.controls.topUpMaxUsd, b.controls.topUpMaxUsd, "topUpMaxUsd");
+  cap(a.controls.pettyCashPerWeekUsd, b.controls.pettyCashPerWeekUsd, "pettyCashPerWeekUsd");
+  if (b.controls.allowedSellers.some((h) => !a.controls.allowedSellers.includes(h))) why.push("adds sellers");
+  if (b.controls.allowedPayees.some((x) => !a.controls.allowedPayees.includes(x))) why.push("adds payees");
+  if (a.controls.frozen && !b.controls.frozen) why.push("unfreezes");
+  if (a.controls.expiresAt && (!b.controls.expiresAt || b.controls.expiresAt > a.controls.expiresAt)) why.push("extends the end date");
+  return why;
+}
+
+/** Money abilities are live only when not frozen and before the end date. */
+export function moneyLive(c: Controls, now = Date.now()): boolean {
+  return !c.frozen && (!c.expiresAt || Date.parse(c.expiresAt) > now);
+}
+
+/** The abilities in force for one run: the agent's, minus money when frozen/expired or when the person asking may not request payments. */
+export function effectiveAbilities(r: AgentRules, opts: { canRequestPayments: boolean; now?: number }): Abilities {
+  const money = moneyLive(r.controls, opts.now) && opts.canRequestPayments;
+  return { sandbox: r.abilities.sandbox, buy: r.abilities.buy && money, draft: r.abilities.draft && money, pettyCash: r.abilities.pettyCash && money };
+}
+
+/** Old script profiles (AgentPolicy) expressed as rules, so scripts and saved agents share one check path. */
+export function rulesFromPolicy(p: AgentPolicy): AgentRules {
+  return {
+    abilities: {
+      sandbox: p.sandbox,
+      buy: p.maxPerCallUsd > 0 && p.allowedHosts.length > 0,
+      draft: p.maxProposalUsd > 0 && p.allowedPayees.length > 0,
+      pettyCash: p.maxTopUpUsd > 0,
+    },
+    controls: {
+      ...DEFAULT_CONTROLS,
+      purchases: { perPayment: p.maxPerCallUsd, daily: null, weekly: null, monthly: null },
+      drafts: { perPayment: p.maxProposalUsd, daily: null, weekly: null, monthly: null },
+      maxPaymentsPerHour: null,
+      allowedSellers: p.allowedHosts.map((h) => h.toLowerCase()),
+      allowedPayees: p.allowedPayees.map((a) => (a as Address).toLowerCase()),
+      topUpMaxUsd: p.maxTopUpUsd,
+      pettyCashPerWeekUsd: null,
+    },
+  };
+}
+
+/** policy.md written into the agent's read-only context folder: the agent reads its own rules. */
+export function rulesMarkdown(name: string, r: AgentRules, payees: { name: string; address: string }[]): string {
+  const c = r.controls;
+  const usd = (x: number | null) => (x === null ? "no limit" : `$${x}`);
+  const lines = [`# ${name}: rules (set by the company; you cannot change them)`, ""];
+  lines.push("- Agents draft; humans cosign. Never claim a payment is done until it is approved.");
+  lines.push(`- Abilities: ${(["buy", "draft", "pettyCash", "sandbox"] as const).filter((k) => r.abilities[k]).join(", ") || "read-only"}.`);
+  if (!moneyLive(c)) lines.push(`- Money abilities are OFF right now (${c.frozen ? "frozen" : "past the end date"}).`);
+  if (r.abilities.buy) {
+    lines.push(`- API purchases: per payment ${usd(c.purchases.perPayment)}, per day ${usd(c.purchases.daily)}, per week ${usd(c.purchases.weekly)}, per month ${usd(c.purchases.monthly)}.`);
+    lines.push(`- Sellers you may call with paid_fetch (nothing else is reachable): ${c.allowedSellers.join(", ") || "none"}. paid_fetch runs on Cosign's server, so "localhost" means Cosign's own demo APIs; fetch a seller's base path to list its services.`);
+    if (c.askAboveUsd !== null) lines.push(`- Purchases above $${c.askAboveUsd} wait for a member's OK.`);
+  }
+  if (r.abilities.draft) {
+    lines.push(`- Drafts: per payment ${usd(c.drafts.perPayment)}, per day ${usd(c.drafts.daily)}, per week ${usd(c.drafts.weekly)}, per month ${usd(c.drafts.monthly)}.`);
+    lines.push(`- Payees you may draft to: ${payees.length ? payees.map((p) => `${p.name} (${p.address})`).join(", ") : "none"}.`);
+  }
+  if (r.abilities.pettyCash) lines.push(`- Petty cash: up to ${usd(c.topUpMaxUsd)} per request; the contract caps the week.`);
+  if (c.maxPaymentsPerHour !== null) lines.push(`- At most ${c.maxPaymentsPerHour} payments per hour.`);
+  if (c.expiresAt) lines.push(`- Money abilities end at ${c.expiresAt}.`);
+  return lines.join("\n") + "\n";
+}

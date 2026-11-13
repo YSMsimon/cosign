@@ -15,16 +15,21 @@ Built during the UBC 2026 Hackathon (Agentic Payments & AI track, Best use of Ar
 - [x] x402 payments: vanilla x402 and Circle Gateway Nanopayments, demo paid APIs that accept both
 - [x] Grok agent: native loop on the xAI Responses API, a microVM sandbox per agent, linked-note memory, sessions with compaction
 - [x] QuickNode Streams live treasury feed
-- [ ] Dashboard (shadcn/ui, AI Elements, ElevenLabs voice), Grok Bot MCP server, wallet sign-in
+- [x] Backend: wallet sign-in, workspaces, members invited by address, roles, agents with wallet controls, chat over SSE, Grok Bot webhook routines, schedules ([docs/backend.md](docs/backend.md))
+- [ ] Dashboard (shadcn/ui, AI Elements, ElevenLabs voice)
 
 ## Local setup
 
 ```bash
 pnpm install
-cp .env.example .env.local   # fill in XAI_API_KEY, CIRCLE_API_KEY, CIRCLE_ENTITY_SECRET, QUICKNODE_*
+cp .env.example .env.local   # fill in XAI_API_KEY, CIRCLE_*, QUICKNODE_*, COSIGN_SECRET, CRON_SECRET
 pnpm tsx --env-file=.env.local scripts/01-setup-wallets.ts
 pnpm dev
+pnpm test:unit && pnpm test:e2e        # backend tests (e2e needs pnpm dev running)
 ```
+
+The backend API, roles, agent controls, Grok Bot connection and tests are described in
+[docs/backend.md](docs/backend.md).
 
 Network: Arc testnet (chain id 5042002, RPC https://rpc.testnet.arc.io). Testnet USDC: https://faucet.circle.com
 

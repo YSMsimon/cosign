@@ -12,7 +12,7 @@ import { discoverServices } from "../src/lib/x402/discovery";
 import { ensureGatewayBalance, gatewayBalance } from "../src/lib/x402/gateway";
 
 const QUICKNODE_ARC = "https://x402.quicknode.com/arc-testnet/";
-const policy = { maxPerCallUsd: 0.01, allowedHosts: ["x402.quicknode.com", "localhost"] };
+const policy = { maxPerCallUsd: 0.01, allowedHosts: ["x402.quicknode.com", "localhost:3000/api/sellers"] };
 const rpc = (method: string, params: unknown[] = []) => ({
   method: "POST",
   headers: { "content-type": "application/json" },

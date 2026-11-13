@@ -45,7 +45,35 @@ function open() {
       inserted INTEGER NOT NULL
     );
   `);
+  sqlite.exec(PRODUCT_DDL);
   return drizzle(sqlite, { schema });
+}
+
+/** Workspaces, people, agents, Grok Bot and schedules (mirrors schema.ts). */
+const PRODUCT_DDL = `
+  CREATE TABLE IF NOT EXISTS users (address TEXT PRIMARY KEY, created_at TEXT NOT NULL, last_login_at TEXT);
+  CREATE TABLE IF NOT EXISTS auth_nonces (nonce TEXT PRIMARY KEY, created_at TEXT NOT NULL, used_at TEXT);
+  CREATE TABLE IF NOT EXISTS auth_sessions (token_hash TEXT PRIMARY KEY, address TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, treasury TEXT NOT NULL UNIQUE, created_by TEXT NOT NULL, created_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS roles (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, key TEXT, name TEXT NOT NULL, permissions TEXT NOT NULL, system INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, UNIQUE (workspace_id, name));
+  CREATE TABLE IF NOT EXISTS members (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, address TEXT NOT NULL, role_id TEXT NOT NULL, title TEXT, invited_by TEXT, created_at TEXT NOT NULL, joined_at TEXT, UNIQUE (workspace_id, address));
+  CREATE INDEX IF NOT EXISTS members_addr ON members (address);
+  CREATE TABLE IF NOT EXISTS contacts (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, name TEXT NOT NULL, address TEXT NOT NULL, notes TEXT, created_by TEXT, created_at TEXT NOT NULL, UNIQUE (workspace_id, address));
+  CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL, visibility TEXT NOT NULL, allowed_role_ids TEXT, owner_member_id TEXT NOT NULL, abilities TEXT NOT NULL, controls TEXT NOT NULL, ref TEXT NOT NULL UNIQUE, wallet_id TEXT NOT NULL, wallet_address TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS agents_ws ON agents (workspace_id);
+  CREATE TABLE IF NOT EXISTS agent_spend (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL, kind TEXT NOT NULL, amount_usd TEXT NOT NULL, ref TEXT, member_id TEXT, task_id TEXT, created_at TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS agent_spend_agent ON agent_spend (agent_id, created_at);
+  CREATE TABLE IF NOT EXISTS approval_requests (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, agent_id TEXT NOT NULL, requested_by TEXT, kind TEXT NOT NULL, url TEXT NOT NULL, host TEXT NOT NULL, amount_usd TEXT NOT NULL, status TEXT NOT NULL, decided_by TEXT, decided_at TEXT, created_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS proposal_meta (treasury TEXT NOT NULL, proposal_id TEXT NOT NULL, agent_id TEXT, requested_by TEXT, task_id TEXT, created_at TEXT NOT NULL, UNIQUE (treasury, proposal_id));
+  CREATE TABLE IF NOT EXISTS grokbot_connections (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL UNIQUE, webhook_url TEXT NOT NULL, webhook_key_enc TEXT NOT NULL, status TEXT NOT NULL, last_error TEXT, connected_at TEXT, created_by TEXT, created_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, agent_id TEXT NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL, engine TEXT NOT NULL, instructions TEXT NOT NULL, status TEXT NOT NULL, token_hash TEXT, token_expires_at TEXT, requested_by TEXT, schedule_id TEXT, progress TEXT NOT NULL DEFAULT '[]', result TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS tasks_token ON tasks (token_hash);
+  CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, agent_id TEXT NOT NULL, name TEXT NOT NULL, instructions TEXT NOT NULL, spec TEXT NOT NULL, next_run_at TEXT NOT NULL, last_run_at TEXT, enabled INTEGER NOT NULL DEFAULT 1, created_by TEXT NOT NULL, created_at TEXT NOT NULL);
+`;
+
+/** Raw better-sqlite3 handle, for the few places that want plain synchronous SQL. */
+export function sqlite(): Database.Database {
+  return (db() as unknown as { $client: Database.Database }).$client;
 }
 
 export function db() {

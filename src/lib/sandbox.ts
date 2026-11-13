@@ -48,7 +48,7 @@ async function status(name: string): Promise<"running" | "stopped" | "missing"> 
 export async function ensureSandbox(
   agentRef: string,
   contextFiles: Record<string, string> = {},
-  opts: { network?: { policy: "allow" | "deny"; allowHosts?: string[] } } = {},
+  opts: { network?: { policy: "allow" | "deny"; allowHosts?: string[] }; vm?: boolean } = {},
 ): Promise<SandboxPaths> {
   const p = sandboxPaths(agentRef);
   for (const d of ["memory", "work", "out"]) mkdirSync(join(p.workspace, d), { recursive: true });
@@ -59,6 +59,7 @@ export async function ensureSandbox(
     writeFileSync(target, content);
   }
 
+  if (opts.vm === false) return p; // folders only (memory, context): no microVM for agents without the sandbox ability
   const s = await status(p.name);
   if (s === "missing") {
     await docker(["create", "--name", p.name, "-q", "shell", p.workspace, `${p.context}:ro`], 600_000);

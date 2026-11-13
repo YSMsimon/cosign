@@ -9,13 +9,12 @@ const INVOICES: Record<string, { vendor: string; amountUsd: string; due: string;
 };
 
 export async function GET(req: Request) {
-  const gate = await requirePayment(req, { priceUsd: "0.01", description: "Invoice reader: parse one invoice" });
-  if (!gate.paid) return gate.response;
-
+  // Unknown invoices answer 404 before the payment gate: nobody pays to learn an invoice doesn't exist.
   const id = new URL(req.url).searchParams.get("invoice") ?? "118";
   const invoice = INVOICES[id];
-  return Response.json(
-    invoice ? { invoice: id, ...invoice, currency: "USDC" } : { error: `unknown invoice ${id}` },
-    { status: invoice ? 200 : 404, headers: gate.headers },
-  );
+  if (!invoice) return Response.json({ error: `unknown invoice ${id}`, known: Object.keys(INVOICES) }, { status: 404 });
+
+  const gate = await requirePayment(req, { priceUsd: "0.01", description: "Invoice reader: parse one invoice" });
+  if (!gate.paid) return gate.response;
+  return Response.json({ invoice: id, ...invoice, currency: "USDC" }, { headers: gate.headers });
 }

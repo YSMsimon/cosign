@@ -69,7 +69,8 @@ async function main() {
     console.log("Requesting testnet USDC from Circle faucet for the test CFO...");
     try {
       await circle.requestTestnetTokens({ address: cfo.address, blockchain: "ARC-TESTNET", usdc: true });
-    } catch (e: any) {
+    } catch (err) {
+      const e = err as { message?: string; response?: { status?: number; data?: unknown } };
       console.log("Faucet API error:", e?.response?.status, JSON.stringify(e?.response?.data ?? e?.message));
     }
     for (let i = 0; i < 20 && Number(await usdcOf(cfo.address)) < 1; i++) await new Promise((r) => setTimeout(r, 3000));
