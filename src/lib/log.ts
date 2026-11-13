@@ -26,7 +26,12 @@ function redact(value: unknown, depth = 0): unknown {
 
 export type RunLogger = ReturnType<typeof createRunLogger>;
 
-export function createRunLogger(meta: { agent: string; kind: string; [k: string]: unknown }, opts: { quiet?: boolean } = {}) {
+export type RunEventHandler = (type: string, data: Record<string, unknown>, ms: number) => void;
+
+export function createRunLogger(
+  meta: { agent: string; kind: string; [k: string]: unknown },
+  opts: { quiet?: boolean; onEvent?: RunEventHandler } = {},
+) {
   const started = Date.now();
   const runId = `${new Date(started).toISOString().replace(/[-:]/g, "").slice(0, 15)}-${meta.agent}-${Math.random().toString(36).slice(2, 6)}`;
   const dir = join(process.env.LOG_DIR ?? "logs", "runs", new Date(started).toISOString().slice(0, 10));
@@ -38,6 +43,7 @@ export function createRunLogger(meta: { agent: string; kind: string; [k: string]
     const rec = { ...(redact(data) as object), runId, seq: seq++, t: new Date().toISOString(), ms: Date.now() - started, type };
     appendFileSync(file, JSON.stringify(rec) + "\n");
     if (!opts.quiet) console.log(`[${String(rec.ms).padStart(6)}ms] ${type.padEnd(16)} ${summarize(data)}`);
+    opts.onEvent?.(type, redact(data) as Record<string, unknown>, rec.ms); // live view (terminal chat); same redaction as the file
     return rec;
   }
   event("run_start", meta);

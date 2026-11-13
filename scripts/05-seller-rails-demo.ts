@@ -1,8 +1,8 @@
 /**
  * Our demo paid APIs now accept BOTH rails. Needs `pnpm dev` running.
  *  1. unpaid request -> 402 offering GatewayWalletBatched + vanilla exact on Arc testnet
- *  2. AP Clerk pays the invoice reader via Gateway Nanopayments ($0.01 from its Gateway balance)
- *  3. AP Clerk pays the vendor check via vanilla x402 (preferGateway: false) ($0.02 onchain)
+ *  2. Clerk pays the invoice reader via Gateway Nanopayments ($0.01 from its Gateway balance)
+ *  3. Clerk pays the vendor check via vanilla x402 (preferGateway: false) ($0.02 onchain)
  * Run: pnpm tsx --env-file=.env.local scripts/05-seller-rails-demo.ts
  */
 import { explorerTx, fmt, usdcBalance, wallet } from "../src/lib/arc";
@@ -17,7 +17,7 @@ const policy = { maxPerCallUsd: 0.05, allowedHosts: ["localhost"] };
   const clerk = wallet("agent-ap-clerk");
   const seller = process.env.SELLER_ADDRESS as `0x${string}`;
   const snap = async () =>
-    `AP Clerk wallet ${fmt(await usdcBalance(clerk.address))} | AP Clerk Gateway ${await gatewayBalance(clerk.address)} | seller wallet ${fmt(await usdcBalance(seller))} | seller Gateway ${await gatewayBalance(seller)}`;
+    `Clerk wallet ${fmt(await usdcBalance(clerk.address))} | Clerk Gateway ${await gatewayBalance(clerk.address)} | seller wallet ${fmt(await usdcBalance(seller))} | seller Gateway ${await gatewayBalance(seller)}`;
   console.log("Before:", await snap());
 
   const raw = await fetch(`${BASE}/api/sellers/invoice-reader?invoice=120`);

@@ -1,8 +1,8 @@
 /**
  * Nanopayments test (Circle Gateway, Arc testnet), with a REAL outside seller:
  *  1. discover paid services on Arc testnet through Circle's Discovery API
- *  2. make sure the AP Clerk has a Gateway balance (one-time approve + deposit)
- *  3. AP Clerk pays QuickNode's x402 RPC ($0.0001) and gets the latest Arc block number back
+ *  2. make sure the Clerk has a Gateway balance (one-time approve + deposit)
+ *  3. Clerk pays QuickNode's x402 RPC ($0.0001) and gets the latest Arc block number back
  *  4. policy refusal on a non-allowlisted host
  * Run: pnpm tsx --env-file=.env.local scripts/04-nanopayments-demo.ts
  */
@@ -33,7 +33,7 @@ const rpc = (method: string, params: unknown[] = []) => ({
   for (const [p, v] of byProvider) console.log(`   - ${p}: ${v.url} ($${v.price}, ${v.rail})`);
 
   // 2. Gateway balance (one-time deposit)
-  console.log(`2. AP Clerk wallet ${fmt(await usdcBalance(clerk.address))} USDC | Gateway ${await gatewayBalance(clerk.address)} USDC`);
+  console.log(`2. Clerk wallet ${fmt(await usdcBalance(clerk.address))} USDC | Gateway ${await gatewayBalance(clerk.address)} USDC`);
   const g = await ensureGatewayBalance("agent-ap-clerk", 0.05, "0.5");
   if (g.deposited) console.log(`   deposited 0.5 USDC into Gateway:\n   approve ${explorerTx(g.deposited.approveTx)}\n   deposit ${explorerTx(g.deposited.depositTx)}`);
   console.log(`   Gateway balance now ${g.balance} USDC`);

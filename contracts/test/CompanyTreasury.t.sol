@@ -218,6 +218,131 @@ contract CompanyTreasuryTest is Test {
         t1.pause();
     }
 
+    // ── approver management (through cosigns) ──
+    function _change(CompanyTreasury t, address by, CompanyTreasury.Kind k, address who, uint8 th) internal returns (uint256 id) {
+        vm.prank(by);
+        id = t.proposeApproverChange(k, who, th, "approver change");
+    }
+
+    function test_addApprover_oneOfOne() public {
+        uint256 id = _change(t1, cfo, CompanyTreasury.Kind.AddApprover, ceo, 0);
+        assertFalse(t1.isApprover(ceo), "nothing changes on propose");
+        vm.prank(cfo);
+        t1.approve(id);
+        assertTrue(t1.isApprover(ceo));
+        assertEq(t1.approvers().length, 2);
+        assertEq(t1.threshold(), 1);
+    }
+
+    function test_addApproverAndRaiseThreshold_thenPaymentsNeedBoth() public {
+        uint256 id = _change(t1, cfo, CompanyTreasury.Kind.AddApprover, ceo, 2);
+        vm.prank(cfo);
+        t1.approve(id);
+        assertEq(t1.threshold(), 2);
+        vm.prank(clerk);
+        uint256 pay = t1.propose(vendor, 10 * USD, "x");
+        vm.prank(cfo);
+        t1.approve(pay);
+        assertEq(usdc.balanceOf(vendor), 0, "now needs two cosigns");
+        vm.prank(ceo);
+        t1.approve(pay);
+        assertEq(usdc.balanceOf(vendor), 10 * USD);
+    }
+
+    function test_oneApproverCannotAddAnotherAlone_inTwoOfTwo() public {
+        uint256 id = _change(t2, cfo, CompanyTreasury.Kind.AddApprover, stranger, 0);
+        vm.prank(cfo);
+        t2.approve(id);
+        assertFalse(t2.isApprover(stranger), "one of two cosigns is not enough");
+        vm.prank(ceo);
+        t2.approve(id);
+        assertTrue(t2.isApprover(stranger));
+    }
+
+    function test_removeApproverAndLowerThreshold() public {
+        uint256 id = _change(t2, cfo, CompanyTreasury.Kind.RemoveApprover, ceo, 1);
+        vm.prank(cfo);
+        t2.approve(id);
+        vm.prank(ceo);
+        t2.approve(id);
+        assertFalse(t2.isApprover(ceo));
+        assertEq(t2.approvers().length, 1);
+        assertEq(t2.threshold(), 1);
+        vm.prank(ceo);
+        vm.expectRevert(CompanyTreasury.NotApprover.selector);
+        t2.approve(id);
+    }
+
+    function test_cannotRemoveBelowThreshold() public {
+        uint256 id = _change(t2, cfo, CompanyTreasury.Kind.RemoveApprover, ceo, 0); // would leave 1 approver, threshold 2
+        vm.prank(cfo);
+        t2.approve(id);
+        vm.prank(ceo);
+        vm.expectRevert(CompanyTreasury.BadInput.selector);
+        t2.approve(id);
+        assertTrue(t2.isApprover(ceo), "nothing changed");
+    }
+
+    function test_cannotRemoveLastApprover() public {
+        uint256 id = _change(t1, cfo, CompanyTreasury.Kind.RemoveApprover, cfo, 0);
+        vm.prank(cfo);
+        vm.expectRevert(CompanyTreasury.BadInput.selector);
+        t1.approve(id);
+    }
+
+    function test_thresholdCannotExceedApprovers() public {
+        uint256 id = _change(t2, cfo, CompanyTreasury.Kind.SetThreshold, address(0), 3);
+        vm.prank(cfo);
+        t2.approve(id);
+        vm.prank(ceo);
+        vm.expectRevert(CompanyTreasury.BadInput.selector);
+        t2.approve(id);
+        assertEq(t2.threshold(), 2);
+    }
+
+    function test_removedApproversCosignNoLongerCounts() public {
+        vm.prank(clerk);
+        uint256 pay = t2.propose(vendor, 5 * USD, "x");
+        vm.prank(ceo);
+        t2.approve(pay); // 1 of 2
+        uint256 id = _change(t2, cfo, CompanyTreasury.Kind.RemoveApprover, ceo, 1);
+        vm.prank(cfo);
+        t2.approve(id);
+        vm.prank(ceo);
+        t2.approve(id); // ceo removed, threshold now 1
+        assertEq(usdc.balanceOf(vendor), 0, "ceo's old cosign does not pay it");
+        vm.prank(cfo);
+        t2.approve(pay);
+        assertEq(t2.getProposal(pay).approvals, 1, "only current approvers are counted");
+        assertEq(usdc.balanceOf(vendor), 5 * USD);
+    }
+
+    function test_agentsAndStrangersCannotProposeApproverChanges() public {
+        vm.prank(clerk);
+        vm.expectRevert(CompanyTreasury.NotApprover.selector);
+        t1.proposeApproverChange(CompanyTreasury.Kind.AddApprover, clerk, 0, "x");
+        vm.prank(stranger);
+        vm.expectRevert(CompanyTreasury.NotApprover.selector);
+        t1.proposeApproverChange(CompanyTreasury.Kind.AddApprover, stranger, 0, "x");
+        vm.prank(cfo);
+        vm.expectRevert(CompanyTreasury.BadInput.selector);
+        t1.proposeApproverChange(CompanyTreasury.Kind.Payment, vendor, 0, "x");
+    }
+
+    function test_approverChangesWorkWhilePaused_paymentsDoNot() public {
+        vm.prank(clerk);
+        uint256 pay = t1.propose(vendor, 1 * USD, "x");
+        vm.prank(cfo);
+        t1.pause();
+        vm.prank(cfo);
+        vm.expectRevert(CompanyTreasury.IsPaused.selector);
+        t1.approve(pay);
+        uint256 id = _change(t1, cfo, CompanyTreasury.Kind.AddApprover, ceo, 0);
+        vm.prank(cfo);
+        t1.approve(id);
+        assertTrue(t1.isApprover(ceo));
+    }
+
     // ── fuzz: top-ups never exceed the allowance in a period ──
     function testFuzz_topUpsNeverExceedAllowance(uint96 a, uint96 b) public {
         uint128 cap = uint128(50 * USD);

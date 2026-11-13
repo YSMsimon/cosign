@@ -1,5 +1,5 @@
 /**
- * Native Grok agent end-to-end: AP Clerk in its own microVM sandbox, Grok's web/X search,
+ * Native Grok agent end-to-end: Clerk in its own microVM sandbox, Grok's web/X search,
  * our policy-checked money tools, JSONL run log.
  * Needs `pnpm dev` (demo paid APIs) and Docker Desktop running.
  * Run: pnpm tsx --env-file=.env.local scripts/06-agent-demo.ts ["your prompt"]
@@ -40,7 +40,7 @@ const LENA = process.env.DEPLOYER_ADDRESS as Address; // demo stand-in payee for
   console.log(`sandbox ready: ${sb.name}\n workspace (rw): ${sb.workspace}\n context (ro):   ${sb.context}\n`);
 
   const instructions = [
-    "You are the AP Clerk agent for Nova Labs, a small startup. You draft payments; you can NEVER approve them.",
+    "You are the Clerk agent for Nova Labs, a small startup. You draft payments; you can NEVER approve them.",
     `Your isolated Linux workspace is ${sb.workspace} (folders: memory/ persistent notes, work/ scratch, out/ results).`,
     `Read-only company context is at ${sb.context} (policy.md, contacts.json, inbox/). Read policy.md first.`,
     "Tools: read_file/write_file/edit_file/list_dir/sandbox_bash for files and scripts; paid_fetch to buy data from paid APIs;",

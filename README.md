@@ -11,7 +11,7 @@ Built during the UBC 2026 Hackathon (Agentic Payments & AI track, Best use of Ar
 ## Status
 
 - [x] Circle developer-controlled wallets on Arc testnet, first USDC transfer
-- [x] `TreasuryFactory` + `CompanyTreasury` contracts (propose → approve → pay, agent petty cash)
+- [x] `TreasuryFactory` + `CompanyTreasury` contracts (propose → approve → pay, agent petty cash, approvers added or removed by cosign)
 - [x] x402 payments: vanilla x402 and Circle Gateway Nanopayments, demo paid APIs that accept both
 - [x] Grok agent: native loop on the xAI Responses API, a microVM sandbox per agent, linked-note memory, sessions with compaction
 - [x] QuickNode Streams live treasury feed
@@ -50,10 +50,11 @@ The filter runs on QuickNode for every block and returns `null` when nothing mat
 with no Cosign activity never cause a webhook call. It keeps three kinds of logs:
 
 1. **New companies.** `TreasuryCreated` from our `TreasuryFactory`
-   (`0x77cd33Bc2a38bFdB0e7B36e26D1c5b8AB5Da510F`).
+   (`0xB794E55ed8b6833AF935c8a8bbD5B3b76f063D79`).
 2. **Treasury events.** Any `CompanyTreasury` event (`ProposalCreated`, `ProposalApproved`,
    `ProposalCancelled`, `PaymentExecuted`, `AllowanceSet`, `AgentToppedUp`, `RoleUpdated`,
-   `Paused`, `Unpaused`, `Deposited`) emitted by an address in the `cosign-treasuries` list.
+   `Paused`, `Unpaused`, `Deposited`, `ApproverChangeProposed`, `ApproverAdded`,
+   `ApproverRemoved`, `ThresholdChanged`) emitted by an address in the `cosign-treasuries` list.
 3. **USDC movements.** `Transfer` logs where the sender or receiver is in the `cosign-wallets` list
    (agent wallets, approvers, treasuries). Only the logs from Arc's system emitter
    `0xffff…fffe` are kept. That emitter logs every USDC movement, native or through the ERC-20
@@ -72,7 +73,7 @@ The webhook route:
 
 - verifies `x-qn-signature` = HMAC-SHA256(security token, nonce + timestamp + body) and rejects
   timestamps more than 5 minutes off (401 on either failure; gzip bodies are accepted),
-- decodes each log into a readable row ("AP Clerk drafted #2: $1.5 → Lena (contractor)"),
+- decodes each log into a readable row ("Clerk drafted #2: $1.5 → Lena (contractor)"),
 - stores it in SQLite, deduplicated on transaction hash + log index, so a retried delivery never
   double counts,
 - answers 200 right away.

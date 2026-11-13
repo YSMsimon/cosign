@@ -1,6 +1,6 @@
-// Generated from contracts/out (do not edit by hand). Re-run after changing the contracts.
+// Generated from contracts/out by scripts/gen-abis.ts (do not edit by hand). Re-run after changing the contracts.
 
-export const TREASURY_FACTORY_ADDRESS = "0x77cd33Bc2a38bFdB0e7B36e26D1c5b8AB5Da510F" as const; // Arc testnet, v2 (with receive())
+export const TREASURY_FACTORY_ADDRESS = "0xB794E55ed8b6833AF935c8a8bbD5B3b76f063D79" as const; // Arc testnet, v3 (approver management)
 
 export const treasuryFactoryAbi = [
   {
@@ -372,6 +372,11 @@ export const companyTreasuryAbi = [
         "internalType": "struct CompanyTreasury.Proposal",
         "components": [
           {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum CompanyTreasury.Kind"
+          },
+          {
             "name": "to",
             "type": "address",
             "internalType": "address"
@@ -380,6 +385,11 @@ export const companyTreasuryAbi = [
             "name": "amount",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "newThreshold",
+            "type": "uint8",
+            "internalType": "uint8"
           },
           {
             "name": "proposer",
@@ -532,6 +542,40 @@ export const companyTreasuryAbi = [
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "memo",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "proposeApproverChange",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "enum CompanyTreasury.Kind"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "newThreshold",
+        "type": "uint8",
+        "internalType": "uint8"
       },
       {
         "name": "memo",
@@ -705,6 +749,75 @@ export const companyTreasuryAbi = [
   },
   {
     "type": "event",
+    "name": "ApproverAdded",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ApproverChangeProposed",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "proposer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "newThreshold",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "memo",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ApproverRemoved",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Deposited",
     "inputs": [
       {
@@ -862,6 +975,19 @@ export const companyTreasuryAbi = [
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ThresholdChanged",
+    "inputs": [
+      {
+        "name": "threshold",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       }
     ],
     "anonymous": false

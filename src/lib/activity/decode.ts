@@ -100,6 +100,18 @@ export function decodeStreamLog(log: StreamLog, names = addressBook()): NewActiv
       return { ...t, type: "paused", actor: String(a.by), summary: `⚠️ Treasury paused by ${label(String(a.by))}` };
     case "Unpaused":
       return { ...t, type: "unpaused", actor: String(a.by), summary: `Treasury resumed by ${label(String(a.by))}` };
+    case "ApproverChangeProposed": {
+      const what = ["payment", "add approver", "remove approver", "set threshold"][Number(a.kind)] ?? "change";
+      const who = Number(a.kind) === 3 ? "" : ` ${label(String(a.account))}`;
+      const th = Number(a.newThreshold) ? ` (threshold → ${a.newThreshold})` : "";
+      return { ...t, type: "approver_change_proposed", proposalId: String(a.id), actor: String(a.proposer), counterparty: Number(a.kind) === 3 ? null : String(a.account), summary: `${label(String(a.proposer))} proposed #${a.id}: ${what}${who}${th}` };
+    }
+    case "ApproverAdded":
+      return { ...t, type: "approver_added", counterparty: String(a.account), summary: `${label(String(a.account))} is now an approver` };
+    case "ApproverRemoved":
+      return { ...t, type: "approver_removed", counterparty: String(a.account), summary: `${label(String(a.account))} is no longer an approver` };
+    case "ThresholdChanged":
+      return { ...t, type: "threshold_changed", summary: `Payments now need ${a.threshold} cosign${Number(a.threshold) > 1 ? "s" : ""}` };
     case "RoleUpdated":
       return { ...t, type: "role_updated", counterparty: String(a.account), summary: `Role ${a.enabled ? "granted to" : "removed from"} ${label(String(a.account))}` };
     default:

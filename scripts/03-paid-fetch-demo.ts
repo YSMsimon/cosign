@@ -1,5 +1,5 @@
 /**
- * Step 3 test: the AP Clerk agent pays $0.01 (x402, Circle-signed EIP-3009) and gets data back.
+ * Step 3 test: the Clerk agent pays $0.01 (x402, Circle-signed EIP-3009) and gets data back.
  * Needs the dev server running:  pnpm dev
  * Run:                            pnpm tsx --env-file=.env.local scripts/03-paid-fetch-demo.ts
  */
@@ -12,7 +12,7 @@ const policy = { maxPerCallUsd: 0.05, allowedHosts: ["localhost"] };
 (async () => {
   const clerk = wallet("agent-ap-clerk");
   const seller = process.env.SELLER_ADDRESS as `0x${string}`;
-  console.log(`AP Clerk ${clerk.address}: ${fmt(await usdcBalance(clerk.address))} USDC | seller ${fmt(await usdcBalance(seller))} USDC`);
+  console.log(`Clerk ${clerk.address}: ${fmt(await usdcBalance(clerk.address))} USDC | seller ${fmt(await usdcBalance(seller))} USDC`);
 
   // 1. unpaid request -> 402
   const raw = await fetch(`${BASE}/api/sellers/invoice-reader?invoice=118`);
@@ -31,7 +31,7 @@ const policy = { maxPerCallUsd: 0.05, allowedHosts: ["localhost"] };
     else throw e;
   }
 
-  console.log(`After: AP Clerk ${fmt(await usdcBalance(clerk.address))} USDC | seller ${fmt(await usdcBalance(seller))} USDC`);
+  console.log(`After: Clerk ${fmt(await usdcBalance(clerk.address))} USDC | seller ${fmt(await usdcBalance(seller))} USDC`);
 })().catch((e) => {
   console.error("FAILED:", e?.response?.status ?? "", JSON.stringify(e?.response?.data ?? e?.message ?? String(e)));
   process.exit(1);

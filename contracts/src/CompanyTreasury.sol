@@ -9,14 +9,25 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 /// @notice Holds a company's USDC. AI agents and team members can only *propose* payments;
 ///         money leaves only after enough human approvers cosign. Agents get a capped,
 ///         per-period petty-cash allowance they can draw without approval.
+///         Approvers can be added or removed, and the threshold changed, through the same
+///         cosign flow as a payment, so one approver can never take over a multi-signer treasury.
 /// @dev On Arc, USDC is the native gas token and `0x3600…0000` is its ERC-20 interface (6 decimals).
 contract CompanyTreasury is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ─────────────────────────── types ───────────────────────────
+    enum Kind {
+        Payment,
+        AddApprover,
+        RemoveApprover,
+        SetThreshold
+    }
+
     struct Proposal {
-        address to;
-        uint256 amount; // USDC, 6 decimals
+        Kind kind;
+        address to; // payee, or the approver being added / removed
+        uint256 amount; // USDC, 6 decimals (payments only)
+        uint8 newThreshold; // approver changes: the threshold afterwards (0 = keep)
         address proposer;
         uint64 createdAt;
         uint8 approvals;
@@ -35,7 +46,7 @@ contract CompanyTreasury is ReentrancyGuard {
     // ─────────────────────────── state ───────────────────────────
     IERC20 public immutable usdc;
     string public name;
-    uint8 public immutable threshold; // approvals required to pay a proposal
+    uint8 public threshold; // approvals required to execute a proposal (changeable by cosign)
 
     mapping(address => bool) public isApprover;
     mapping(address => bool) public isProposer;
@@ -59,6 +70,10 @@ contract CompanyTreasury is ReentrancyGuard {
     event RoleUpdated(bytes32 indexed role, address indexed account, bool enabled);
     event Paused(address indexed by);
     event Unpaused(address indexed by);
+    event ApproverChangeProposed(uint256 indexed id, address indexed proposer, uint8 kind, address account, uint8 newThreshold, string memo);
+    event ApproverAdded(address indexed account);
+    event ApproverRemoved(address indexed account);
+    event ThresholdChanged(uint8 threshold);
 
     // ─────────────────────────── errors ───────────────────────────
     error NotApprover();
@@ -135,8 +150,10 @@ contract CompanyTreasury is ReentrancyGuard {
         id = proposals.length;
         proposals.push(
             Proposal({
+                kind: Kind.Payment,
                 to: to,
                 amount: amount,
+                newThreshold: 0,
                 proposer: msg.sender,
                 createdAt: uint64(block.timestamp),
                 approvals: 0,
@@ -148,14 +165,88 @@ contract CompanyTreasury is ReentrancyGuard {
         emit ProposalCreated(id, msg.sender, to, amount, memo);
     }
 
-    /// @notice Cosign a proposal. Pays automatically when approvals reach the threshold.
-    function approve(uint256 id) external onlyApprover whenNotPaused nonReentrant {
+    /// @notice Propose adding or removing an approver, or changing the threshold. Approvers only
+    ///         (never agents). It executes after `threshold` cosigns, like a payment, and works while
+    ///         the treasury is paused, so a compromised approver can be removed during a pause.
+    function proposeApproverChange(Kind kind, address account, uint8 newThreshold, string calldata memo)
+        external
+        onlyApprover
+        returns (uint256 id)
+    {
+        if (kind == Kind.Payment) revert BadInput();
+        if (kind == Kind.AddApprover && (account == address(0) || account == address(this) || isApprover[account])) {
+            revert BadInput();
+        }
+        if (kind == Kind.RemoveApprover && !isApprover[account]) revert BadInput();
+        if (kind == Kind.SetThreshold && newThreshold == 0) revert BadInput();
+        id = proposals.length;
+        proposals.push(
+            Proposal({
+                kind: kind,
+                to: account,
+                amount: 0,
+                newThreshold: newThreshold,
+                proposer: msg.sender,
+                createdAt: uint64(block.timestamp),
+                approvals: 0,
+                executed: false,
+                cancelled: false,
+                memo: memo
+            })
+        );
+        emit ApproverChangeProposed(id, msg.sender, uint8(kind), account, newThreshold, memo);
+    }
+
+    /// @notice Cosign a proposal. Executes automatically when cosigns from CURRENT approvers reach the
+    ///         threshold (a removed approver's earlier cosign no longer counts). Payments are blocked
+    ///         while paused; approver changes are not.
+    function approve(uint256 id) external onlyApprover nonReentrant {
         Proposal storage p = _open(id);
+        if (p.kind == Kind.Payment && paused) revert IsPaused();
         if (approvedBy[id][msg.sender]) revert AlreadyApproved();
         approvedBy[id][msg.sender] = true;
-        uint8 n = ++p.approvals;
+        uint8 n = _countApprovals(id);
+        p.approvals = n;
         emit ProposalApproved(id, msg.sender, n);
-        if (n >= threshold) _execute(id, p);
+        if (n >= threshold) {
+            if (p.kind == Kind.Payment) _execute(id, p);
+            else _executeChange(p);
+        }
+    }
+
+    function _countApprovals(uint256 id) private view returns (uint8 n) {
+        for (uint256 i; i < approverList.length; ++i) {
+            if (approvedBy[id][approverList[i]]) ++n;
+        }
+    }
+
+    function _executeChange(Proposal storage p) private {
+        p.executed = true;
+        address a = p.to;
+        if (p.kind == Kind.AddApprover) {
+            if (isApprover[a]) revert BadInput();
+            isApprover[a] = true;
+            approverList.push(a);
+            emit ApproverAdded(a);
+        } else if (p.kind == Kind.RemoveApprover) {
+            if (!isApprover[a]) revert BadInput();
+            isApprover[a] = false;
+            uint256 last = approverList.length - 1;
+            for (uint256 i; i <= last; ++i) {
+                if (approverList[i] == a) {
+                    approverList[i] = approverList[last];
+                    approverList.pop();
+                    break;
+                }
+            }
+            emit ApproverRemoved(a);
+        }
+        if (p.newThreshold != 0 && p.newThreshold != threshold) {
+            threshold = p.newThreshold;
+            emit ThresholdChanged(threshold);
+        }
+        // never leave the treasury without approvers or with an unreachable threshold
+        if (approverList.length == 0 || threshold == 0 || threshold > approverList.length) revert BadInput();
     }
 
     /// @notice Cancel a proposal. The proposer or any approver can cancel.

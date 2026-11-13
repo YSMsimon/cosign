@@ -179,7 +179,7 @@ export async function treasuryState(treasury: Address) {
     chain.readContract({ address: treasury, abi: companyTreasuryAbi, functionName: "proposalCount" }),
     usdcBalance(treasury),
   ]);
-  return { name, threshold, paused, proposalCount: count, balance: fmt(bal) };
+  return { name, threshold, approvers: await approversOf(treasury), paused, proposalCount: count, balance: fmt(bal) };
 }
 
 export const availableAllowance = async (treasury: Address, agent: Address) =>
@@ -191,6 +191,29 @@ export const setGuardian = (approverRef: string, treasury: Address, account: Add
   callFrom(approverRef, treasury, companyTreasuryAbi, "setGuardian", [account, enabled]);
 export const unpauseTreasury = (approverRef: string, treasury: Address) => callFrom(approverRef, treasury, companyTreasuryAbi, "unpause", []);
 export const cancelProposal = (ref: string, treasury: Address, id: bigint) => callFrom(ref, treasury, companyTreasuryAbi, "cancel", [id]);
+
+export const APPROVER_CHANGE = { add: 1, remove: 2, threshold: 3 } as const; // CompanyTreasury.Kind
+
+/** An approver proposes adding/removing an approver or changing the threshold; it executes after enough cosigns. */
+export async function proposeApproverChange(
+  approverRef: string,
+  treasury: Address,
+  kind: keyof typeof APPROVER_CHANGE,
+  account: Address,
+  newThreshold = 0,
+  memo = "",
+) {
+  const { hash, receipt } = await callFrom(approverRef, treasury, companyTreasuryAbi, "proposeApproverChange", [APPROVER_CHANGE[kind], account, newThreshold, memo]);
+  for (const log of receipt.logs) {
+    try {
+      const ev = decodeEventLog({ abi: companyTreasuryAbi, data: log.data, topics: log.topics });
+      if (ev.eventName === "ApproverChangeProposed") return { id: ev.args.id as bigint, hash };
+    } catch {}
+  }
+  throw new Error("ApproverChangeProposed event not found");
+}
+export const approversOf = (treasury: Address) =>
+  chain.readContract({ address: treasury, abi: companyTreasuryAbi, functionName: "approvers" }) as Promise<readonly Address[]>;
 export const isPaused = (treasury: Address) => chain.readContract({ address: treasury, abi: companyTreasuryAbi, functionName: "paused" }) as Promise<boolean>;
 export const isGuardian = (treasury: Address, account: Address) =>
   chain.readContract({ address: treasury, abi: companyTreasuryAbi, functionName: "isGuardian", args: [account] }) as Promise<boolean>;

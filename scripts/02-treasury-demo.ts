@@ -1,6 +1,6 @@
 /**
  * Step 2 end-to-end on Arc testnet:
- * create company treasury -> fund it -> give the AP Clerk a petty-cash allowance ->
+ * create company treasury -> fund it -> give the Clerk a petty-cash allowance ->
  * clerk tops up -> clerk proposes a vendor bill -> CFO cosigns -> paid.
  *
  * Run: pnpm tsx --env-file=.env.local scripts/02-treasury-demo.ts
@@ -34,14 +34,14 @@ const STORE = "data/treasury.local.json";
   console.log(`2. CFO funded treasury with 5 USDC: ${explorerTx(fund)}`);
 
   const allow = await setAgentAllowance("test-cfo", treasury, clerk.address, "2", 7 * 24 * 3600);
-  console.log(`3. AP Clerk petty-cash allowance = 2 USDC / week: ${explorerTx(allow.hash)}`);
+  console.log(`3. Clerk petty-cash allowance = 2 USDC / week: ${explorerTx(allow.hash)}`);
 
   const top = await topUpAgent("agent-ap-clerk", treasury, "1");
-  console.log(`4. AP Clerk topped up 1 USDC itself (no approval): ${explorerTx(top.hash)}`);
+  console.log(`4. Clerk topped up 1 USDC itself (no approval): ${explorerTx(top.hash)}`);
   console.log(`   allowance left this week: ${await availableAllowance(treasury, clerk.address)} USDC`);
 
   const p = await proposePayment("agent-ap-clerk", treasury, vendor, "1.5", "Invoice #118 - design work");
-  console.log(`5. AP Clerk proposed paying vendor 1.5 USDC (proposal #${p.id}): ${explorerTx(p.hash)}`);
+  console.log(`5. Clerk proposed paying vendor 1.5 USDC (proposal #${p.id}): ${explorerTx(p.hash)}`);
   console.log(`   vendor balance before cosign: ${fmt(await usdcBalance(vendor))} USDC`);
 
   const a = await approvePayment("test-cfo", treasury, p.id);

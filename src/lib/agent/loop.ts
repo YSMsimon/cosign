@@ -11,7 +11,7 @@
  *  - Grok's built-in web_search / x_search run server-side alongside our policy-checked function tools.
  *  - Every step is logged (JSONL). Server-only.
  */
-import { createRunLogger, type RunLogger } from "../log";
+import { createRunLogger, type RunEventHandler, type RunLogger } from "../log";
 import { rebuildIndex } from "./memory";
 import { DEFAULT_COMPACT_AT, loadSession, now, saveSession, shouldCompact, startNewChain, type Session } from "./session";
 import { toolByName, xaiTools, type AgentContext } from "./tools";
@@ -132,6 +132,7 @@ export async function runAgentTurn(opts: {
   maxSteps?: number;
   compactAt?: number;
   quiet?: boolean;
+  onEvent?: RunEventHandler; // live tool calls / results for a terminal or UI
 }) {
   const model = opts.model ?? "grok-4.3";
   const maxSteps = opts.maxSteps ?? 16;
@@ -140,7 +141,7 @@ export async function runAgentTurn(opts: {
   s.runs += 1;
   const log = createRunLogger(
     { agent, kind: "agent-turn", model, prompt: opts.prompt, run: s.runs, chain: s.chainId, contextTokens: s.lastContextTokens, compactAt: s.compactAt, compactions: s.compactions },
-    { quiet: opts.quiet },
+    { quiet: opts.quiet, onEvent: opts.onEvent },
   );
   const tools = xaiTools(opts.ctx.policy);
   const totals = { in: 0, cached: 0, out: 0, webSearches: 0, xSearches: 0, toolCalls: 0, refusals: 0, compactions: 0 };

@@ -4,7 +4,7 @@
  * Server-only.
  */
 import type { Address } from "viem";
-import { availableAllowance, fmt, proposePayment, topUpAgent, treasuryState, usdcBalance, wallet } from "../arc";
+import { availableAllowance, fmt, proposePayment, topUpAgent, treasuryState, usdcBalance, wallets } from "../arc";
 import { editFile, listDir, readFile, sandboxExec, writeFile } from "../sandbox";
 import { paidFetch, PolicyRefusal } from "../x402/buyer";
 import { discoverServices } from "../x402/discovery";
@@ -120,7 +120,9 @@ export const TOOLS: ToolDef[] = [
     description: "Your wallet USDC, your Gateway (nanopayment) balance, your remaining weekly petty-cash allowance, and the company treasury state.",
     parameters: obj({}),
     run: async (c) => {
-      const w = wallet(c.agentRef);
+      const w = wallets().find((x) => x.refId === c.agentRef);
+      // a read-only agent may have no wallet: it still sees the treasury
+      if (!w) return { wallet: null, treasury: { address: c.treasury, ...(await treasuryState(c.treasury)), proposalCount: undefined } };
       return {
         wallet: w.address,
         walletUsdc: fmt(await usdcBalance(w.address)),
