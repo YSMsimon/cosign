@@ -6,7 +6,7 @@
  */
 import { readFileSync } from "node:fs";
 import type { Address } from "viem";
-import { runAgent } from "../src/lib/agent/loop";
+import { runAgentTurn } from "../src/lib/agent/loop";
 import type { AgentPolicy } from "../src/lib/agent/tools";
 import { ensureSandbox } from "../src/lib/sandbox";
 
@@ -54,7 +54,7 @@ const LENA = process.env.DEPLOYER_ADDRESS as Address; // demo stand-in payee for
       "Find the vendor's address in context/contacts.json, run the vendor check API (http://localhost:3000/api/sellers/vendor-check?address=<address>) on it, " +
       "then draft the payment proposal. Append a 2-line summary to memory/notes.md and tell me what is waiting for my cosign and what you spent.";
 
-  const r = await runAgent({ ctx: { agentRef: AGENT, treasury, policy }, instructions, prompt });
+  const r = await runAgentTurn({ ctx: { agentRef: AGENT, treasury, policy }, instructions, prompt });
   console.log(
     `\n=== FINAL ANSWER ===\n${r.finalText}\n\nrun ${r.runId} | tool calls ${r.totals.toolCalls} | refusals ${r.totals.refusals} | ` +
       `web searches ${r.totals.webSearches} | tokens ${r.totals.in}/${r.totals.out} | est. model cost $${r.estCostUsd.toFixed(4)}\nlog: ${r.logFile}`,

@@ -9,6 +9,7 @@ import { editFile, listDir, readFile, sandboxExec, writeFile } from "../sandbox"
 import { paidFetch, PolicyRefusal } from "../x402/buyer";
 import { discoverServices } from "../x402/discovery";
 import { gatewayBalance } from "../x402/gateway";
+import { MAX_NOTE_CHARS, memoryArchive, memoryRead, memorySearch, memoryWrite } from "./memory";
 
 export type AgentPolicy = {
   maxPerCallUsd: number; // x402 per-request cap
@@ -70,6 +71,46 @@ export const TOOLS: ToolDef[] = [
     description: "List files in a workspace or context folder.",
     parameters: obj({ path: str("folder, e.g. '.', 'out', 'context'") }),
     run: (c, a) => listDir(c.agentRef, String(a.path ?? ".")),
+  },
+
+  // ── memory (linked note graph in memory/, like an Obsidian vault) ──
+  {
+    name: "memory_write",
+    kind: "sandbox",
+    description:
+      `Create or replace ONE small memory note (max ${MAX_NOTE_CHARS} chars) in your memory graph. One topic per note; ` +
+      "link related notes with [[slug]]; update an existing note instead of duplicating it. INDEX.md is maintained for you.",
+    parameters: obj(
+      {
+        slug: str("note id, lowercase-with-dashes, e.g. 'vendor-lena'"),
+        title: str("short title"),
+        description: str("one line shown in the memory index"),
+        content: str("markdown body; reference other notes as [[slug]]"),
+      },
+      ["slug", "title", "description", "content"],
+    ),
+    run: (c, a) => memoryWrite(c.agentRef, String(a.slug), String(a.title), String(a.description), String(a.content)),
+  },
+  {
+    name: "memory_read",
+    kind: "sandbox",
+    description: "Read one memory note by slug, with its outgoing links and backlinks.",
+    parameters: obj({ slug: str("note id") }, ["slug"]),
+    run: (c, a) => memoryRead(c.agentRef, String(a.slug)),
+  },
+  {
+    name: "memory_search",
+    kind: "sandbox",
+    description: "Search your memory notes by text.",
+    parameters: obj({ query: str("text to search for") }, ["query"]),
+    run: (c, a) => memorySearch(c.agentRef, String(a.query)),
+  },
+  {
+    name: "memory_archive",
+    kind: "sandbox",
+    description: "Retire an outdated memory note (moved to memory/.archive, not deleted).",
+    parameters: obj({ slug: str("note id") }, ["slug"]),
+    run: (c, a) => memoryArchive(c.agentRef, String(a.slug)),
   },
 
   // ── read-only finance ──
