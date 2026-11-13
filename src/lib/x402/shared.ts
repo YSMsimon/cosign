@@ -18,7 +18,7 @@ export type PaymentRequirements = {
   asset: string;
   payTo: string;
   maxTimeoutSeconds: number;
-  extra: { name: string; version: string; assetTransferMethod?: "eip3009" };
+  extra: { name: string; version: string; assetTransferMethod?: "eip3009"; verifyingContract?: string; [k: string]: unknown };
 };
 
 export type Resource = { url: string; description: string; mimeType: string };

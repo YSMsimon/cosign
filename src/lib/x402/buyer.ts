@@ -1,28 +1,45 @@
 /**
- * Buyer side of x402 for our agents: `paidFetch` calls a URL; if it answers 402, it checks the price
- * against the agent's policy, has Circle sign an EIP-3009 authorization with the agent's
- * developer-controlled wallet (no private key on our server), retries, and returns data + receipt.
+ * Buyer side of x402 for our agents. `paidFetch` calls a URL; on 402 it picks a payment rail,
+ * checks the agent's policy BEFORE anything is signed, has Circle sign with the agent's
+ * developer-controlled EOA (no private key on our server), retries, and returns data + receipt.
+ *
+ * Rails (Arc testnet):
+ *  - "gateway": Circle Gateway Nanopayments (GatewayWalletBatched): gas-free, sub-cent, batched.
+ *    Preferred when offered and the agent has Gateway balance. Built with Circle's BatchEvmScheme.
+ *  - "vanilla": plain x402 `exact` (EIP-3009 on the USDC contract), settled per payment.
  * Server-only.
  */
 import { toHex } from "viem";
 import { circle, wallet } from "../arc";
+import { batchSchemeFor, gatewayBalance } from "./gateway";
 import {
   ARC_CHAIN_ID, ARC_NETWORK, X402_VERSION, atomicToUsd, decodeHeader, encodeHeader,
-  type Authorization, type PaymentPayload, type PaymentRequired, type SettlementResponse,
+  type Authorization, type PaymentPayload, type PaymentRequired, type PaymentRequirements, type SettlementResponse,
 } from "./shared";
 
 export type PaidFetchPolicy = {
   maxPerCallUsd: number; // refuse anything pricier
   allowedHosts?: string[]; // seller allowlist (hostnames); undefined = allow all
+  preferGateway?: boolean; // default true
 };
 
 export type PaidFetchResult = {
   status: number;
   data: unknown;
-  paid: null | { amountUsd: string; payTo: string; transaction?: string; payer?: string };
+  paid: null | {
+    rail: "gateway" | "vanilla";
+    amountUsd: string;
+    payTo: string;
+    transaction?: string; // vanilla: settled tx hash; gateway: settles later in a batch
+    nonce?: string; // EIP-3009 nonce (lookup key for Gateway transfer status)
+    receipt?: SettlementResponse;
+  };
 };
 
 export class PolicyRefusal extends Error {}
+
+const isGateway = (r: PaymentRequirements) => r.network === ARC_NETWORK && r.extra?.name === "GatewayWalletBatched";
+const isVanilla = (r: PaymentRequirements) => r.network === ARC_NETWORK && r.scheme === "exact" && !isGateway(r);
 
 export async function paidFetch(agentRef: string, url: string, policy: PaidFetchPolicy, init?: RequestInit): Promise<PaidFetchResult> {
   const first = await fetch(url, init);
@@ -30,24 +47,68 @@ export async function paidFetch(agentRef: string, url: string, policy: PaidFetch
 
   const header = first.headers.get("payment-required");
   const challenge: PaymentRequired = header ? decodeHeader(header) : ((await first.json()) as PaymentRequired);
-  const req = challenge.accepts.find((r) => r.scheme === "exact" && r.network === ARC_NETWORK);
-  if (!req) throw new PolicyRefusal(`no supported payment option (need exact on ${ARC_NETWORK})`);
+  const gatewayOpt = challenge.accepts.find(isGateway);
+  const vanillaOpt = challenge.accepts.find(isVanilla);
+  if (!gatewayOpt && !vanillaOpt) throw new PolicyRefusal(`no supported payment option on ${ARC_NETWORK}`);
 
   // ── policy check BEFORE anything is signed ──
   const host = new URL(url).hostname;
   if (policy.allowedHosts && !policy.allowedHosts.includes(host)) throw new PolicyRefusal(`seller ${host} is not on the allowlist`);
+
+  const agent = wallet(agentRef);
+  let rail: "gateway" | "vanilla";
+  let req: PaymentRequirements;
+  if (gatewayOpt && policy.preferGateway !== false && (await gatewayBalance(agent.address)) >= Number(atomicToUsd(gatewayOpt.amount))) {
+    rail = "gateway";
+    req = gatewayOpt;
+  } else if (vanillaOpt) {
+    rail = "vanilla";
+    req = vanillaOpt;
+  } else {
+    throw new PolicyRefusal("seller only accepts Gateway nanopayments and the agent's Gateway balance is too low; deposit first");
+  }
   const priceUsd = atomicToUsd(req.amount);
   if (Number(priceUsd) > policy.maxPerCallUsd) throw new PolicyRefusal(`price $${priceUsd} exceeds per-call cap $${policy.maxPerCallUsd}`);
 
-  // ── sign EIP-3009 TransferWithAuthorization via Circle (agent's dev-controlled wallet) ──
-  const agent = wallet(agentRef);
+  // ── sign ──
+  let headerValue: string;
+  let nonce: string;
+  if (rail === "gateway") {
+    const p = await batchSchemeFor(agentRef).createPaymentPayload(challenge.x402Version, req as never);
+    nonce = (p.payload as { authorization?: { nonce?: string } }).authorization?.nonce ?? "";
+    headerValue = encodeHeader({ ...p, accepted: req, resource: challenge.resource });
+  } else {
+    const authorization = await signVanilla(agent.id, agent.address, req, host, priceUsd);
+    nonce = authorization.auth.nonce;
+    const payload: PaymentPayload = {
+      x402Version: X402_VERSION,
+      resource: challenge.resource,
+      accepted: req,
+      payload: { signature: authorization.signature, authorization: authorization.auth },
+    };
+    headerValue = encodeHeader(payload);
+  }
+
+  const second = await fetch(url, { ...init, headers: { ...(init?.headers ?? {}), "PAYMENT-SIGNATURE": headerValue } });
+  const receiptHeader = second.headers.get("payment-response");
+  const receipt = receiptHeader ? decodeHeader<SettlementResponse>(receiptHeader) : undefined;
+  return {
+    status: second.status,
+    data: await safeJson(second),
+    paid: second.ok
+      ? { rail, amountUsd: priceUsd, payTo: req.payTo, transaction: receipt?.transaction || undefined, nonce, receipt }
+      : null,
+  };
+}
+
+async function signVanilla(walletId: string, from: string, req: PaymentRequirements, host: string, priceUsd: string) {
   const now = Math.floor(Date.now() / 1000);
-  const authorization: Authorization = {
-    from: agent.address,
+  const auth: Authorization = {
+    from,
     to: req.payTo,
     value: req.amount,
     validAfter: "0",
-    validBefore: String(now + Math.max(60, req.maxTimeoutSeconds)),
+    validBefore: String(now + Math.max(60, Math.min(req.maxTimeoutSeconds, 3600))),
     nonce: toHex(crypto.getRandomValues(new Uint8Array(32))),
   };
   const typedData = {
@@ -69,32 +130,10 @@ export async function paidFetch(agentRef: string, url: string, policy: PaidFetch
     },
     domain: { name: req.extra.name, version: req.extra.version, chainId: ARC_CHAIN_ID, verifyingContract: req.asset },
     primaryType: "TransferWithAuthorization",
-    message: authorization,
+    message: auth,
   };
-  const signed = await circle().signTypedData({
-    walletId: agent.id,
-    data: JSON.stringify(typedData),
-    memo: `x402: pay $${priceUsd} to ${host}`,
-  });
-  const signature = normalizeV(signed.data!.signature!);
-
-  const payload: PaymentPayload = {
-    x402Version: X402_VERSION,
-    resource: challenge.resource,
-    accepted: req,
-    payload: { signature, authorization },
-  };
-  const second = await fetch(url, {
-    ...init,
-    headers: { ...(init?.headers ?? {}), "PAYMENT-SIGNATURE": encodeHeader(payload) },
-  });
-  const receiptHeader = second.headers.get("payment-response");
-  const receipt = receiptHeader ? decodeHeader<SettlementResponse>(receiptHeader) : undefined;
-  return {
-    status: second.status,
-    data: await safeJson(second),
-    paid: second.ok ? { amountUsd: priceUsd, payTo: req.payTo, transaction: receipt?.transaction, payer: receipt?.payer } : null,
-  };
+  const signed = await circle().signTypedData({ walletId, data: JSON.stringify(typedData), memo: `x402: pay $${priceUsd} to ${host}` });
+  return { auth, signature: normalizeV(signed.data!.signature!) };
 }
 
 /** Facilitator requires v = 27/28; some signers return 0/1. */
