@@ -41,7 +41,7 @@ export function YouSaid({ line, children }: { line: Line; children?: React.React
         <Files files={line.files} />
         {line.text && (
           <Bubble align="end" variant="muted">
-            <BubbleContent>{children ?? line.text}</BubbleContent>
+            <BubbleContent className={children ? "leading-7" : undefined}>{children ?? line.text}</BubbleContent>
           </Bubble>
         )}
       </MessageContent>
@@ -49,34 +49,50 @@ export function YouSaid({ line, children }: { line: Line; children?: React.React
   );
 }
 
+/**
+ * The words of a message: shadcn Bubble, ghost variant (no fill, no padding). Message drops its header's bubble
+ * indent when a ghost bubble is inside, so the name lines up with the text; the taller line fits inline tags.
+ */
+export function Words({ children }: { children: React.ReactNode }) {
+  return (
+    <Bubble variant="ghost">
+      <BubbleContent className="leading-7">{children}</BubbleContent>
+    </Bubble>
+  );
+}
+
+/* Team-chat layout on shadcn Message: the face at the top beside the name (Message puts it at the bottom, for bubbles). */
+const ROW = "gap-3";
+const FACE = "self-start";
+const NAME = "px-0 text-sm font-medium text-foreground";
+
 /** A teammate's turn in a room: their initials, their name, what they said. */
 export function PersonSaid({ name, initials, line, children }: { name: string; initials: string; line: Line; children?: React.ReactNode }) {
   return (
-    <Message>
-      <MessageAvatar>
+    <Message className={ROW}>
+      <MessageAvatar className={FACE}>
         <Avatar>
           <AvatarFallback>{initials}</AvatarFallback>
         </Avatar>
       </MessageAvatar>
-      <MessageContent>
-        <MessageHeader className="text-sm font-medium">{name}</MessageHeader>
+      <MessageContent className="gap-1">
+        <MessageHeader className={NAME}>{name}</MessageHeader>
         <Files files={line.files} />
-        {/* a div, not a p: mention tags hold an orb (a div) */}
-        {children ? <div>{children}</div> : line.text && <p>{line.text}</p>}
+        {(children || line.text) && <Words>{children ?? line.text}</Words>}
       </MessageContent>
     </Message>
   );
 }
 
-/** An agent's turn in a room: its orb and name over whatever it shows (steps, text, an approval). */
+/** An agent's turn in a room: its orb and name over whatever it shows (steps, words, an approval). */
 export function AgentSaid({ name, hue, thinking = false, children }: { name: string; hue: OrbHue; thinking?: boolean; children: React.ReactNode }) {
   return (
-    <Message>
-      <MessageAvatar>
+    <Message className={ROW}>
+      <MessageAvatar className={FACE}>
         {thinking ? <AgentOrb hue={hue} state="thinking" className="size-8" /> : <AgentOrb hue={hue} still className="size-8" />}
       </MessageAvatar>
-      <MessageContent className="gap-3">
-        <MessageHeader className="text-sm font-medium">{name}</MessageHeader>
+      <MessageContent className="gap-2">
+        <MessageHeader className={NAME}>{name}</MessageHeader>
         {children}
       </MessageContent>
     </Message>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowUpIcon, AudioLines, FileTextIcon, Mic, PlusIcon, XIcon } from "lucide-react";
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentMedia, AttachmentTitle } from "@/components/ui/attachment";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group";
@@ -42,18 +42,45 @@ export function Composer({
 }) {
   const [draft, setDraft] = useState("");
   const [listOpen, setListOpen] = useState(false);
+  /* Dice keeps its own list of where each mention sits and only updates it on its own edits. After we clear the box
+     it would still hold the old positions and paint the next mentions twice, so each send starts a fresh Mention.
+     Dice also misplaces mentions when one is added before another; the check below catches that too. */
+  const [round, setRound] = useState(0);
+  const caretAfterReset = useRef<number | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const canSend = (draft.trim().length > 0 || files.length > 0) && !busy;
   const named = mentions ? mentionedIn(draft, mentions) : [];
 
-  const unmention = (m: Member) =>
-    setDraft((d) =>
-      d
-        .replace(new RegExp(`(^|\\s)@${m.name}(?![\\w-])\\s?`, "gi"), "$1")
-        .replace(/\s{2,}/g, " ")
-        .trimStart(),
-    );
+  const startFresh = (caret: number) => {
+    caretAfterReset.current = caret;
+    setRound((r) => r + 1);
+  };
+
+  // if Dice's painted copy of the text (its highlight layer) no longer matches the text, start it fresh
+  useEffect(() => {
+    if (!mentions) return;
+    const id = requestAnimationFrame(() => {
+      const box = formRef.current?.querySelector("textarea");
+      const layer = box?.parentElement?.firstElementChild;
+      if (!box || !layer || layer === box) return;
+      const painted = (layer.textContent ?? "").slice(0, -1); // Dice adds one trailing space
+      if (painted !== draft) startFresh(box.selectionStart);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [draft, mentions]);
+
+  // the fresh Mention brings a new textarea; put the caret back and keep typing in it
+  useEffect(() => {
+    const caret = caretAfterReset.current;
+    if (caret === null) return;
+    caretAfterReset.current = null;
+    requestAnimationFrame(() => {
+      const box = formRef.current?.querySelector("textarea");
+      box?.focus();
+      box?.setSelectionRange(caret, caret);
+    });
+  }, [round]);
 
   const textarea = (
     <InputGroupTextarea
@@ -115,17 +142,9 @@ export function Composer({
         >
           <PlusIcon />
         </InputGroupButton>
-        {/* who this message @names, with their faces; removing a tag takes the @ out of the text */}
+        {/* who this message @names, with their faces (Backspace in the text removes a mention whole) */}
         {named.map((m) => (
-          <Tag
-            key={m.id}
-            variant="info"
-            size="sm"
-            appear
-            leading={<MemberFace m={m} className="size-4" />}
-            onDismiss={() => unmention(m)}
-            dismissLabel={`Remove @${m.name}`}
-          >
+          <Tag key={m.id} variant="info" size="sm" appear leading={<MemberFace m={m} className="size-4" />}>
             {m.name}
           </Tag>
         ))}
@@ -165,6 +184,7 @@ export function Composer({
         onSend(draft.trim(), files);
         setDraft("");
         setFiles(() => []);
+        if (mentions) startFresh(0);
       }}
     >
       <input
@@ -182,6 +202,7 @@ export function Composer({
       {mentions ? (
         /* Dice UI Mention: watches for @, lists who can be named at the caret, inserts the name; the highlight matches the Tag */
         <Mention
+          key={round}
           trigger="@"
           inputValue={draft}
           onInputValueChange={setDraft}

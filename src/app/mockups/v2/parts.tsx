@@ -1,13 +1,14 @@
 "use client";
 
 /** Simple version: two pages (Team, Permissions) and one subpage (a session). Pesto UI + shadcn only. */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CircleCheck, ShieldCheck, Users } from "lucide-react";
+import { CircleCheck, MessagesSquare, ShieldCheck } from "lucide-react";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { IconRail, IconRailItem, IconRailSpacer } from "@/components/icon-rail";
 import { OrbAvatar, type OrbHue } from "@/components/orb-avatar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Spinner } from "@/components/ui/spinner";
 import { Orb, type AgentState } from "@/components/ui/orb";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -40,13 +41,14 @@ export const sessions: { title: string; agent: AgentId; via: Source; last: strin
   { title: "Month-end notes", agent: "scribe", via: "Schedule", last: "Wrote 3 notes to memory.", when: "Nov 1" },
 ];
 
-export function Shell({ page, children }: { page: "team" | "permissions"; children: React.ReactNode }) {
+/** The app frame: Pesto Icon Rail with two places (rooms and agents, permissions). The Team page was dropped (Simon, 2026-11-14). */
+export function Shell({ page, children }: { page: "chat" | "permissions"; children: React.ReactNode }) {
   const router = useRouter();
   return (
     <div className="flex h-screen bg-background text-foreground">
       <div className="flex p-3">
         <IconRail srLabel="Cosign" size="sm" className="h-full">
-          <IconRailItem srLabel="Team" icon={<Users />} active={page === "team"} onClick={() => router.push("/mockups/v2/team")} />
+          <IconRailItem srLabel="Rooms and agents" icon={<MessagesSquare />} active={page === "chat"} onClick={() => router.push("/mockups/v2/session")} />
           <IconRailItem srLabel="Permissions" icon={<ShieldCheck />} active={page === "permissions"} onClick={() => router.push("/mockups/v2/permissions")} />
           <IconRailSpacer />
           <li>
@@ -150,7 +152,8 @@ export type Decision = "open" | "approved" | "denied";
 /**
  * Asks for a yes before an action runs: shadcn AI Elements' Confirmation pattern (an outline Item with Deny and
  * Approve). Used for every action that needs a person: a paid API call above the ask-first amount, a command, a
- * treasury payment (no proposal cards: Simon, 2026-11-14). Once decided it becomes one line of the agent's steps (Trace), like the shadcn example.
+ * treasury payment (no proposal cards: Simon, 2026-11-14). After Approve, `pending` steps (connecting the wallet,
+ * waiting for the signature, sending to the vault) show one by one beside a Pesto Spinner; then the step line. Once decided it becomes one line of the agent's steps (Trace), like the shadcn example.
  */
 export function ApprovalRow({
   icon,
@@ -160,6 +163,7 @@ export function ApprovalRow({
   denied,
   decision,
   onDecide,
+  pending = [],
 }: {
   icon: React.ReactNode;
   title: string;
@@ -168,10 +172,27 @@ export function ApprovalRow({
   denied: string; // the step line once denied
   decision?: Decision; // controlled from outside; otherwise the row keeps its own
   onDecide?: (approved: boolean) => void;
+  /** what happens after Approve, in order (prototype: about a second each) */
+  pending?: string[];
 }) {
   const [own, setOwn] = useState<Decision>("open");
+  const [step, setStep] = useState<number | null>(null);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
   const d = decision ?? own;
   const decide = (yes: boolean) => {
+    if (yes && pending.length) {
+      setStep(0);
+      pending.forEach((_, i) => i > 0 && timers.current.push(setTimeout(() => setStep(i), i * 1300)));
+      timers.current.push(
+        setTimeout(() => {
+          setStep(null);
+          setOwn("approved");
+          onDecide?.(true);
+        }, pending.length * 1300),
+      );
+      return;
+    }
     setOwn(yes ? "approved" : "denied");
     onDecide?.(yes);
   };
@@ -181,15 +202,21 @@ export function ApprovalRow({
         <ItemMedia variant="icon">{icon}</ItemMedia>
         <ItemContent>
           <ItemTitle>{title}</ItemTitle>
-          <ItemDescription>{description}</ItemDescription>
+          <ItemDescription aria-live="polite">{step === null ? description : pending[step]}</ItemDescription>
         </ItemContent>
         <ItemActions>
-          <Button size="sm" variant="outline" onClick={() => decide(false)}>
-            Deny
-          </Button>
-          <Button size="sm" onClick={() => decide(true)}>
-            Approve
-          </Button>
+          {step === null ? (
+            <>
+              <Button size="sm" variant="outline" onClick={() => decide(false)}>
+                Deny
+              </Button>
+              <Button size="sm" onClick={() => decide(true)}>
+                Approve
+              </Button>
+            </>
+          ) : (
+            <Spinner size="sm" label={pending[step]} className="mx-3 text-muted-foreground" />
+          )}
         </ItemActions>
       </Item>
     );

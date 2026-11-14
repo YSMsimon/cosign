@@ -17,7 +17,7 @@ import { roomMembers, Said } from "./mentions";
 import { ApprovalRow, Steps } from "./parts";
 import { InviteToRoomDialog, JoinRoomEmpty, ME, RoomIcon, RoomMembers } from "./rooms";
 import { roomKey, useAgents, useLines, useRooms, useTeam, type Room } from "./store";
-import { AgentSaid, PersonSaid, YouSaid } from "./thread";
+import { AgentSaid, PersonSaid, Words, YouSaid } from "./thread";
 
 /** Agents in the room named with @ in a message, e.g. "@Clerk can you pay this?" */
 function mentioned(text: string, names: { id: string; name: string }[]) {
@@ -98,12 +98,12 @@ export function RoomView({ room, files, setFiles }: { room: Room; files: Picked[
                             title="Handled invoice 120 in 14 s"
                             steps={["Read invoice 120 · paid $0.01", "Vendor check on Lena · paid $0.02 · risk low", "Name and address match the saved payee", "Drafted proposal #5"]}
                           />
-                          <div>
+                          <Words>
                             <Said
                               text="Drafted $2.40 to Lena for invoice 120 [[invoice]]. Her address matches the saved payee [[payee]]. @Auditor can you review it before Priya approves?"
                               members={members}
                             />
-                          </div>
+                          </Words>
                         </AgentSaid>
                       </MessageScrollerItem>
                       <MessageScrollerItem messageId="r3">
@@ -112,18 +112,19 @@ export function RoomView({ room, files, setFiles }: { room: Room; files: Picked[
                             title="Reviewed proposal #5 in 6 s"
                             steps={["Read proposal #5 onchain", "Compared it with invoice 120", "Lena's history · 3 paid, none disputed"]}
                           />
-                          <div>
+                          <Words>
                             <Said
                               text="The amount and payee match the invoice [[invoice]] and the proposal onchain [[proposal]]. @Priya it's ready for you."
                               members={members}
                             />
-                          </div>
+                          </Words>
                           <ApprovalRow
                             icon={<Wallet />}
                             title="Approve $2.40 to Lena?"
                             description="Proposal #5 · you sign in your own wallet"
                             approved="Approved · paid $2.40 to Lena"
                             denied="Denied · nothing was paid"
+                            pending={["Connecting to your wallet…", "Waiting for your signature…", "Sending your approval to the treasury on Arc…"]}
                           />
                         </AgentSaid>
                       </MessageScrollerItem>
@@ -140,9 +141,9 @@ export function RoomView({ room, files, setFiles }: { room: Room; files: Picked[
                           </YouSaid>
                         ) : agent ? (
                           <AgentSaid name={agent.name} hue={agent.hue}>
-                            <div>
+                            <Words>
                               <Said text={l.text} members={members} />
-                            </div>
+                            </Words>
                           </AgentSaid>
                         ) : (
                           <PersonSaid name={mate?.name ?? "Someone"} initials={mate?.initials ?? "?"} line={l}>

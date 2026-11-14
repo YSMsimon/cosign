@@ -15,7 +15,7 @@ const STATES: { label: string; state: AgentState }[] = [
 /** Design board (not in the nav): the agent orb, idle to talking, next to the plain ElevenLabs Orb. */
 export default function OrbsBoard() {
   return (
-    <Shell page="team">
+    <Shell page="chat">
       <div className="mx-auto max-w-5xl px-8 py-8">
         <PageHeader title="Orbs" description="One orb per agent, from the list to the call. Only its state changes." />
 

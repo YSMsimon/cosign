@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Bot, ChevronRight, Coins, Hash, Wallet, Mic, MicOff, PaperclipIcon, PhoneOff, Plus, Search, UserPlus } from "lucide-react";
+import { Bot, Coins, Hash, Wallet, Mic, MicOff, PaperclipIcon, PhoneOff, Plus, Search, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { EmptyState, EmptyStateDescription, EmptyStateTitle } from "@/components/ui/empty-state";
@@ -28,7 +28,7 @@ import { AgentOrb, ApprovalRow, HUE_COLORS, Shell, Steps } from "../parts";
 import { RoomView } from "../room-view";
 import { InviteTeammateDialog, JoinRoomDialog, ME, NewRoomDialog, RoomList } from "../rooms";
 import { useAgents, useLines, useRooms, useTeam, type Line } from "../store";
-import { YouSaid } from "../thread";
+import { Words, YouSaid } from "../thread";
 
 type Phase = "connecting" | "listening" | "thinking" | "talking";
 
@@ -153,7 +153,7 @@ export function SessionView() {
             : "Listening";
 
   return (
-    <Shell page="team">
+    <Shell page="chat">
       {/* files can be dropped anywhere on the page; they land in the message box */}
       <div
         className="relative flex h-full"
@@ -267,11 +267,7 @@ export function SessionView() {
         ) : agent ? (
           <main className="flex min-w-0 flex-1 flex-col">
             <header className="flex items-center gap-1.5 px-8 py-4 text-sm text-muted-foreground">
-              <button type="button" className="hover:text-foreground" onClick={() => router.push("/mockups/v2/team")}>
-                Team
-              </button>
-              <ChevronRight className="size-3.5" />
-              <span className="text-foreground">{agent.name}</span>
+              <span className="font-medium text-foreground">{agent.name}</span>
               <StatusBadge status={agent.online || inCall ? "online" : "offline"} pulse={agent.online || inCall} className="ml-2">
                 {inCall ? "In a call" : agent.online ? "Working" : "Idle"}
               </StatusBadge>
@@ -305,8 +301,8 @@ export function SessionView() {
                               <YouSaid line={{ who: "you", text: "Lena sent invoice 120 for the frontend work. Can you handle it?" }} />
                             </MessageScrollerItem>
                             <MessageScrollerItem messageId="s2">
-                              <Message>
-                                <MessageAvatar>
+                              <Message className="gap-3">
+                                <MessageAvatar className="self-start">
                                   <AgentOrb hue={agent.hue} still className="size-8" />
                                 </MessageAvatar>
                                 <MessageContent className="gap-3">
@@ -315,16 +311,17 @@ export function SessionView() {
                                     title="Handled invoice 120 in 14 s"
                                     steps={["Read invoice 120 · paid $0.01", "Vendor check on Lena · paid $0.02 · risk low", "Name and address match the saved payee", "Drafted proposal #5"]}
                                   />
-                                  <div>
+                                  <Words>
                                     {/* in a one-to-one chat there is no one to @, but sources are still cited inline */}
                                     <Said text="Drafted $2.40 to Lena for invoice 120 [[invoice]]. It needs one approval." members={[]} />
-                                  </div>
+                                  </Words>
                                   <ApprovalRow
                                     icon={<Wallet />}
                                     title="Approve $2.40 to Lena?"
                                     description="Proposal #5 · you sign in your own wallet"
                                     approved="Approved · paid $2.40 to Lena"
                                     denied="Denied · nothing was paid"
+                                    pending={["Connecting to your wallet…", "Waiting for your signature…", "Sending your approval to the treasury on Arc…"]}
                                   />
                                 </MessageContent>
                               </Message>
@@ -333,8 +330,8 @@ export function SessionView() {
                               <YouSaid line={{ who: "you", text: "Get a credit report on Lena before I approve." }} />
                             </MessageScrollerItem>
                             <MessageScrollerItem messageId="s4">
-                              <Message>
-                                <MessageAvatar>
+                              <Message className="gap-3">
+                                <MessageAvatar className="self-start">
                                   <AgentOrb hue={agent.hue} still className="size-8" />
                                 </MessageAvatar>
                                 <MessageContent className="gap-3">
@@ -346,6 +343,7 @@ export function SessionView() {
                                     description="QuickNode API · over the $0.05 ask-first limit"
                                     approved="Paid $0.10 · credit report on Lena: no issues found"
                                     denied="Denied · nothing was paid"
+                                    pending={["Telling Clerk it's OK…", "Clerk is paying $0.10 from its own wallet…"]}
                                   />
                                 </MessageContent>
                               </Message>
@@ -358,8 +356,8 @@ export function SessionView() {
                             {l.who === "you" ? (
                               <YouSaid line={l} />
                             ) : (
-                              <Message>
-                                <MessageAvatar>
+                              <Message className="gap-3">
+                                <MessageAvatar className="self-start">
                                   <AgentOrb hue={agent.hue} still className="size-8" />
                                 </MessageAvatar>
                                 <MessageContent>
@@ -376,8 +374,8 @@ export function SessionView() {
                         ))}
                         {replying && (
                           <MessageScrollerItem messageId="replying">
-                            <Message>
-                              <MessageAvatar>
+                            <Message className="gap-3">
+                              <MessageAvatar className="self-start">
                                 <AgentOrb hue={agent.hue} state="thinking" className="size-8" />
                               </MessageAvatar>
                               <MessageContent>
