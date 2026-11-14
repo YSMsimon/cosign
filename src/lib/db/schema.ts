@@ -195,9 +195,9 @@ export const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id").notNull(),
   agentId: text("agent_id").notNull(),
-  kind: text("kind").notNull(), // ping | task
+  kind: text("kind").notNull(), // ping | task | voice
   source: text("source").notNull(), // connect | member | schedule
-  engine: text("engine").notNull(), // grokbot | cosign
+  engine: text("engine").notNull(), // grokbot | cosign | elevenlabs
   instructions: text("instructions").notNull(),
   status: text("status").notNull(), // queued | sent | acked | working | done | failed
   tokenHash: text("token_hash"),

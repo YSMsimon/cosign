@@ -14,59 +14,12 @@
  */
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
-import { and, desc, eq } from "drizzle-orm";
-import { wallet } from "../src/lib/arc";
+import { desc, eq } from "drizzle-orm";
 import { db, schema } from "../src/lib/db";
-import { loadMembership } from "../src/lib/server/access";
 import { connect, connectionOf, disconnect, setupMessage, startTask } from "../src/lib/server/grokbot";
+import { checkReachable, demo, follow, publicBase } from "./lib/demo";
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const clip = () => execFileSync("pbpaste", { encoding: "utf8" }).trim();
-
-async function publicBase(): Promise<string> {
-  const env = process.env.PUBLIC_BASE_URL?.replace(/\/$/, "");
-  if (env) return env;
-  try {
-    const r = await fetch("http://127.0.0.1:4040/api/tunnels", { signal: AbortSignal.timeout(2000) });
-    const t = ((await r.json()) as { tunnels: { public_url: string }[] }).tunnels.find((x) => x.public_url.startsWith("https://"));
-    if (t) return t.public_url;
-  } catch {}
-  throw new Error("no public URL: start `ngrok http 3000` or set PUBLIC_BASE_URL in .env.local");
-}
-
-async function checkReachable(base: string) {
-  const r = await fetch(`${base}/api/v1/auth/nonce`, { headers: { "user-agent": "curl/8" }, signal: AbortSignal.timeout(10_000) }).catch(() => null);
-  if (!r?.ok) throw new Error(`${base} does not reach the app (is \`pnpm dev\` running and the tunnel pointing at :3000?)`);
-}
-
-function demo(agentName: string) {
-  const ws = db().select().from(schema.workspaces).where(eq(schema.workspaces.name, "Nova Labs")).get();
-  if (!ws) throw new Error("no demo workspace: run pnpm tsx --env-file=.env.local scripts/seed-demo.ts");
-  const m = loadMembership(wallet("test-cfo").address.toLowerCase(), ws.id);
-  if (!m) throw new Error("the Test CFO is not a member of the demo workspace");
-  const agents = db().select().from(schema.agents).where(and(eq(schema.agents.workspaceId, ws.id), eq(schema.agents.status, "active"))).all();
-  const agent = agents.find((a) => a.name.toLowerCase() === agentName.toLowerCase());
-  if (!agent) throw new Error(`no agent "${agentName}" in ${ws.name}; there are: ${agents.map((a) => a.name).join(", ")}`);
-  return { m, ws, agent };
-}
-
-async function follow(taskId: string, minutes = 10) {
-  let seen = 0;
-  let status = "";
-  const t0 = Date.now();
-  while (Date.now() - t0 < minutes * 60_000) {
-    const t = db().select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).get()!;
-    if (t.status !== status) console.log(`  [${t.status}]`);
-    status = t.status;
-    const progress = JSON.parse(t.progress) as { t: string; message: string }[];
-    for (const p of progress.slice(seen)) console.log(`  · ${p.message}`);
-    seen = progress.length;
-    if (t.status === "done") return console.log(`\nresult:\n${t.result}`);
-    if (t.status === "failed") return console.log(`\nfailed: ${t.error}`);
-    await sleep(2000);
-  }
-  console.log(`still ${status} after ${minutes} min; check later with: pnpm grokbot status`);
-}
 
 (async () => {
   const [cmd = "status", ...rest] = process.argv.slice(2);

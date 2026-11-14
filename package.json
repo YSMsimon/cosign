@@ -12,7 +12,8 @@
     "test": "pnpm test:unit && pnpm test:e2e",
     "agent": "tsx --env-file=.env.local scripts/agent.ts",
     "cosign": "tsx --env-file=.env.local scripts/cosign.ts",
-    "grokbot": "tsx --env-file=.env.local scripts/grokbot.ts"
+    "grokbot": "tsx --env-file=.env.local scripts/grokbot.ts",
+    "voice": "tsx --env-file=.env.local scripts/voice.ts"
   },
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "^10.8.1",

@@ -27,7 +27,7 @@ const now = () => new Date().toISOString();
 const TASK_TOKEN_MIN = 30;
 const PING_TOKEN_MIN = 5;
 /** Tools the Bot may call through our API (no microVM tools: it has its own computer). */
-export const BOT_TOOLS = new Set(["get_balances", "discover_services", "paid_fetch", "propose_payment", "request_topup", "memory_write", "memory_read", "memory_search", "memory_archive"]);
+export const BOT_TOOLS = new Set(["get_balances", "list_proposals", "discover_services", "paid_fetch", "propose_payment", "request_topup", "memory_write", "memory_read", "memory_search", "memory_archive"]);
 
 export const publicBase = (fallback: string) => (process.env.PUBLIC_BASE_URL ?? fallback).replace(/\/$/, "");
 
@@ -150,12 +150,12 @@ async function postWebhook(c: ConnectionRow, body: unknown): Promise<string | nu
   }
 }
 
-function setTask(taskId: string, set: Partial<TaskRow>) {
+export function setTask(taskId: string, set: Partial<TaskRow>) {
   db().update(schema.tasks).set({ ...set, updatedAt: now() }).where(eq(schema.tasks.id, taskId)).run();
   return db().select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).get()!;
 }
 
-function actorFor(memberId: string | null): Actor {
+export function actorFor(memberId: string | null): Actor {
   if (!memberId) return { memberId: null, permissions: [] };
   const row = db()
     .select({ perms: schema.roles.permissions })
@@ -255,7 +255,7 @@ export function callback(task: TaskRow, kind: "ack" | "progress" | "result", bod
   return setTask(task.id, { status: "done", result: String(body.result ?? "") });
 }
 
-function botScope(task: TaskRow) {
+export function botScope(task: TaskRow) {
   if (task.status === "done" || task.status === "failed") throw new HttpError(409, `task is already ${task.status}`);
   const agent = db().select().from(schema.agents).where(eq(schema.agents.id, task.agentId)).get();
   const ws = db().select().from(schema.workspaces).where(eq(schema.workspaces.id, task.workspaceId)).get();

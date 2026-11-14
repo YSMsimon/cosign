@@ -114,6 +114,26 @@ money and memory tools, not the microVM tools (it has its own computer). With no
 run on our own loop. The header that carries the webhook key still needs confirming with a live ping from the desktop app.
 We send `Authorization: Bearer` and `X-Webhook-Key`; `GROKBOT_WEBHOOK_HEADER=<name>` sends only that one.
 
+## Voice (ElevenLabs)
+
+ElevenLabs runs the voice conversation (listening, turn-taking, speaking); its tools are webhook tools
+that call us, like Grok Bot. One ElevenLabs agent per Cosign agent, "Cosign: <name>", created by
+`pnpm voice setup`; ids and the post-call webhook secret (encrypted) live in `data/elevenlabs.local.json`.
+
+1. `POST /agents/:id/voice` (a member who may use the agent) opens a voice session: a task of kind
+   `voice` with its own token (30 minutes). It returns a signed URL (the agent only starts from one) and
+   the conversation's dynamic variables: the agent's job and rules narrowed to that member, and
+   `secret__cosign_auth`, which ElevenLabs puts only in the tool request header, never in the LLM's context.
+2. Each tool call is `POST /voice/tools/{name}` with that token and the arguments as the JSON body.
+   Same checks as the chat, under the member's rights. A refusal answers 200 `{ ok: false, refused }`
+   so the agent can say why. Tools: balances, `list_proposals`, the x402 ones, drafting, top-up, memory.
+   `open_cosign` is a client tool the page handles: it shows the cosign card; the wallet signs.
+3. When the call ends, ElevenLabs' HMAC-signed post-call webhook (`POST /voice/webhook`) closes the
+   session, keeps the summary and transcript on the task, and the token stops working. Retries are harmless.
+
+The webhook's URL can't be edited, so `pnpm voice setup` creates a new one when the public URL changes
+and disables the old one.
+
 ## Schedules
 
 Stored here (`POST /agents/:id/schedules` with `{every: hour|day|week, minute, hour, weekday}` in UTC).
@@ -138,13 +158,26 @@ pnpm grokbot task "Check our balances"  # one task, with live progress
 pnpm grokbot status
 ```
 
+Voice from the terminal (needs `ELEVENLABS_API_KEY`; run setup again when the public URL changes):
+
+```bash
+pnpm voice setup        # tools, post-call webhook and the agent "Cosign: Clerk" on ElevenLabs
+pnpm voice test         # opens a session and loads it into the agent's test values; talk in the ElevenLabs dashboard
+pnpm voice status
+```
+
 `.env.local` needs `COSIGN_SECRET` and `CRON_SECRET` besides the Circle, xAI and QuickNode keys
-(`PUBLIC_BASE_URL` when Grok Bot must reach a tunnel or deploy).
+(`PUBLIC_BASE_URL` when Grok Bot must reach a tunnel or deploy; `ELEVENLABS_API_KEY` for voice).
+
+Only one process should hold `data/cosign.db` for long. If its write-ahead log is ever deleted or
+replaced under a running process, that process stops itself at once (without closing the database,
+so the stale log is never copied back). Back up `data/` and restart.
 
 ## Tests
 
-- `pnpm test:unit`: 27 tests, no network: roles, agent access, rules and loosening, all seven controls
-  against a throwaway database, wallet sign-in, the checked tool runner, schedule times, secret encryption.
+- `pnpm test:unit`: 32 tests, no network: roles, agent access, rules and loosening, all seven controls
+  against a throwaway database, wallet sign-in, the checked tool runner, schedule times, secret encryption,
+  voice (post-call signatures, tool configs, session tokens, the post-call webhook).
 - `pnpm test:e2e`: 23 tests against the running app on Arc testnet with real throwaway wallets: sign-in,
   creating a company onchain, invites, roles, contacts, agents, controls, onchain setup, chat over SSE
   (Grok), cosigning, adding an approver, Grok Bot connect / tasks / tokens (a mock routine), schedules,
@@ -204,4 +237,8 @@ POST   /api/v1/cron/tick                           x-cron-secret
 GET    /api/v1/bot/context                         Bearer task token
 POST   /api/v1/bot/tools/:name                     Bearer task token, { args }
 POST   /api/v1/bot/tasks/:tid/ack|progress|result  Bearer task token
+GET    /api/v1/agents/:ag/voice                    voice set up?
+POST   /api/v1/agents/:ag/voice                    open a voice session → signed URL + dynamic variables
+POST   /api/v1/voice/tools/:name                   Bearer voice session token, body = the tool's arguments
+POST   /api/v1/voice/webhook                       ElevenLabs post-call webhook (HMAC)
 ```

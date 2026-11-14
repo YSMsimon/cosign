@@ -6,7 +6,8 @@
  * Server-only.
  */
 import type { Address } from "viem";
-import { availableAllowance, fmt, proposePayment, topUpAgent, treasuryState, usdcBalance, wallets } from "../arc";
+import { availableAllowance, chain, fmt, proposePayment, topUpAgent, treasuryState, usdcBalance, wallets } from "../arc";
+import { companyTreasuryAbi } from "../contracts/abis";
 import { editFile, listDir, readFile, sandboxExec, writeFile } from "../sandbox";
 import { NeedsApproval, paidFetch, PolicyRefusal } from "../x402/buyer";
 import { discoverServices } from "../x402/discovery";
@@ -140,6 +141,33 @@ export const TOOLS: ToolDef[] = [
         weeklyAllowanceLeftUsdc: await availableAllowance(c.treasury, w.address),
         treasury: { address: c.treasury, ...(await treasuryState(c.treasury)), proposalCount: undefined },
       };
+    },
+  },
+  {
+    name: "list_proposals",
+    kind: "read",
+    description:
+      "The company treasury's payment proposals, newest first: number, payee, amount, memo, cosigns so far and status. " +
+      "Use it to answer what is waiting for a cosign. Only humans cosign, from their own wallets.",
+    parameters: obj({ status: str("'open' (default) or 'all'") }),
+    run: async (c, a) => {
+      const t = c.treasury;
+      const [count, threshold] = await Promise.all([
+        chain.readContract({ address: t, abi: companyTreasuryAbi, functionName: "proposalCount" }) as Promise<bigint>,
+        chain.readContract({ address: t, abi: companyTreasuryAbi, functionName: "threshold" }) as Promise<number>,
+      ]);
+      const all = String(a.status ?? "open") === "all";
+      const kinds = ["payment", "add_approver", "remove_approver", "set_threshold"];
+      const out = [];
+      for (let i = Number(count) - 1; i >= 0 && i >= Number(count) - 25 && out.length < 10; i--) {
+        const p = (await chain.readContract({ address: t, abi: companyTreasuryAbi, functionName: "getProposal", args: [BigInt(i)] })) as {
+          kind: number; to: string; amount: bigint; approvals: number; executed: boolean; cancelled: boolean; memo: string;
+        };
+        const status = p.executed ? "executed" : p.cancelled ? "cancelled" : "open";
+        if (!all && status !== "open") continue;
+        out.push({ id: i, kind: kinds[p.kind] ?? "unknown", to: p.to.toLowerCase(), amountUsd: p.kind === 0 ? fmt(p.amount) : null, memo: p.memo, cosigns: `${p.approvals} of ${threshold}`, status });
+      }
+      return { threshold, proposals: out };
     },
   },
   {

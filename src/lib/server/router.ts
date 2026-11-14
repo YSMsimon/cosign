@@ -1,7 +1,8 @@
 /**
  * Cosign backend API, mounted at /api/v1 (src/app/api/v1/[...path]/route.ts).
  * This table is the API reference: method, path, who may call it, and what it does.
- * Signed-in = wallet sign-in cookie. Bot endpoints use the per-task Bearer token from a Grok Bot webhook.
+ * Signed-in = wallet sign-in cookie. Bot endpoints use the per-task Bearer token from a Grok Bot webhook;
+ * voice tool endpoints use the voice session's token, and the voice webhook is HMAC-signed by ElevenLabs.
  */
 import { after } from "next/server";
 import { z } from "zod";
@@ -12,10 +13,11 @@ import { requireAddress, requireAgentMember, requireMember, type Membership } fr
 import { agentDetail, agentView, createAgent, listAgents, onchainStatus, requireSee, retireAgent, sweepAgent, updateAgent } from "./agents";
 import { memberThread, readThread, requireUse, runTurn, sseTurn } from "./chat";
 import { botContext, botTool, callback, connect, connectionOf, connectionView, disconnect, listTasks, publicBase, requireConnectRight, setupMessage, startTask, taskForToken, taskView } from "./grokbot";
-import { errorResponse, forbidden, HttpError, notFound, parseBody } from "./http";
+import { badRequest, errorResponse, forbidden, HttpError, notFound, parseBody } from "./http";
 import { activityMatcher, approverChangeTx, cancelTx, cosignTx, decideApproval, listApprovals, listProposals, workspaceActivity } from "./money";
 import { createSchedule, deleteSchedule, listSchedules, tick, updateSchedule } from "./schedules";
 import { safeEqual } from "./util";
+import { postCall, startVoice, voiceStatus, voiceTool } from "./voice";
 import {
   addContact, createRole, createWorkspace, deleteRole, inviteMember, listContacts, listMembers, listRoles, myWorkspaces, prepareCreate, removeContact,
   removeMember, updateMember, updateRole, workspaceDetail,
@@ -279,6 +281,38 @@ for (const kind of ["ack", "progress", "result"] as const) {
     return { task: taskView(callback(task, kind, b)) };
   });
 }
+
+// ───────────── ElevenLabs voice ─────────────
+// Start: a member who may use the agent gets a signed URL and the conversation's dynamic variables.
+route("GET", "/agents/:ag/voice", (req, p) => {
+  const { m, agent } = requireAgentMember(req, p.ag);
+  requireSee(m, agent);
+  return voiceStatus(agent);
+});
+route("POST", "/agents/:ag/voice", async (req, p) => {
+  const { m, agent } = requireAgentMember(req, p.ag);
+  requireUse(m, agent);
+  return Response.json(await startVoice(m, agent), { status: 201, headers: { "cache-control": "no-store" } });
+});
+// ElevenLabs' webhook tools (Bearer = the voice session's token; the body is the tool's arguments).
+route("POST", "/voice/tools/:name", async (req, p) => {
+  const task = taskForToken(req);
+  const raw = await req.text();
+  let args: Record<string, unknown> = {};
+  if (raw.trim()) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw badRequest("body must be JSON");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw badRequest("body must be a JSON object");
+    args = parsed as Record<string, unknown>;
+  }
+  return voiceTool(task, p.name, args);
+});
+// ElevenLabs' post-call webhook (HMAC-signed with the secret saved by `pnpm voice setup`).
+route("POST", "/voice/webhook", async (req) => postCall(await req.text(), req.headers.get("elevenlabs-signature")));
 
 // ───────────── dispatch ─────────────
 function match(path: string, pattern: string): Params | null {

@@ -5,7 +5,7 @@
  */
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import * as schema from "./schema";
 
@@ -76,7 +76,38 @@ export function sqlite(): Database.Database {
   return (db() as unknown as { $client: Database.Database }).$client;
 }
 
+/**
+ * Split guard. While this process has the database open, its write-ahead log (data/cosign.db-wal) must
+ * stay the same file. Twice on 2026-11-13 it was deleted under the running dev server (another process
+ * closed the database after the server's file locks had been dropped), so the server kept writing to a
+ * log nobody else could see. If that happens, stop this process at once WITHOUT closing the database:
+ * a normal close would copy the stale log back over newer data. Back up data/, then restart.
+ */
+const wal = globalThis as unknown as { __cosignWalIno?: number; __cosignWalChecked?: number };
+function guardWal() {
+  const t = Date.now();
+  if (t - (wal.__cosignWalChecked ?? 0) < 1000) return;
+  wal.__cosignWalChecked = t;
+  let ino: number | null = null;
+  try {
+    ino = statSync(`${DB_FILE}-wal`).ino;
+  } catch {}
+  if (wal.__cosignWalIno === undefined) {
+    if (ino !== null) wal.__cosignWalIno = ino;
+    return;
+  }
+  if (ino !== wal.__cosignWalIno) {
+    console.error(
+      `[cosign] ${DB_FILE}-wal was deleted or replaced by another process while this process had it open (a database split). ` +
+        "Stopping now without closing the database, so the stale log is never written back. Back up data/, then restart.",
+    );
+    process.kill(process.pid, "SIGKILL");
+  }
+}
+
 export function db() {
-  return (g.__cosignDb ??= open());
+  const d = (g.__cosignDb ??= open());
+  guardWal();
+  return d;
 }
 export { schema };
