@@ -7,14 +7,16 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tag } from "@/components/ui/tag";
 import type { OrbHue } from "@/components/orb-avatar";
 import type { Agent } from "./agents";
+import { AddressLine, LENA, personAddress, walletOf } from "./money";
 import { AgentOrb } from "./parts";
 import type { Room, Teammate } from "./store";
 
 /** Someone you can @: an agent or a teammate. */
-export type Member = { id: string; name: string; kind: "agent" | "person"; sub: string; hue?: OrbHue; initials?: string };
+/** `address` is the person's wallet, or the agent's own wallet. */
+export type Member = { id: string; name: string; kind: "agent" | "person"; sub: string; address: string; hue?: OrbHue; initials?: string };
 
-export const agentMember = (a: Agent): Member => ({ id: a.id, name: a.name, kind: "agent", sub: a.job, hue: a.hue });
-export const personMember = (t: Teammate): Member => ({ id: t.id, name: t.name, kind: "person", sub: `${t.role} · ${t.wallet}`, initials: t.initials });
+export const agentMember = (a: Agent): Member => ({ id: a.id, name: a.name, kind: "agent", sub: a.job, address: walletOf(a.id).address, hue: a.hue });
+export const personMember = (t: Teammate): Member => ({ id: t.id, name: t.name, kind: "person", sub: t.role, address: t.address ?? personAddress(t.id), initials: t.initials });
 
 /** Everyone in a room you could @ (not yourself): agents first, then people. */
 export function roomMembers(room: Room, team: Teammate[], agents: Agent[]): Member[] {
@@ -67,6 +69,7 @@ export function MentionChip({ m }: { m: Member }) {
             {m.kind === "agent" && <Tag variant="info">Agent</Tag>}
           </div>
           <p className="truncate text-xs text-muted-foreground">{m.sub}</p>
+          <AddressLine address={m.address} label={`${m.name}'s wallet address`} className="-ml-0.5" />
         </div>
       </PopoverContent>
     </Popover>
@@ -74,7 +77,8 @@ export function MentionChip({ m }: { m: Member }) {
 }
 
 /** Where an agent got something: a file, a saved record or a page. */
-export type Source = { label: string; title: string; description: string; url?: string };
+/** `address` is shown copyable and linked to the explorer under the description. */
+export type Source = { label: string; title: string; description: string; url?: string; address?: { value: string; label: string } };
 
 /**
  * shadcn AI Elements Inline Citation: a secondary xs Button in the sentence it supports. Its card opens on click
@@ -91,6 +95,7 @@ export function Citation({ source }: { source: Source }) {
       <PopoverContent className="flex w-64 flex-col gap-1">
         <div className="font-medium">{source.title}</div>
         <p className="text-muted-foreground">{source.description}</p>
+        {source.address && <AddressLine address={source.address.value} label={source.address.label} className="-ml-0.5" />}
         {source.url && (
           <a href={source.url} target="_blank" rel="noreferrer" className="text-xs text-muted-foreground underline-offset-4 hover:underline">
             {new URL(source.url).hostname}
@@ -112,12 +117,14 @@ export const SOURCES: Record<string, Source> = {
   payee: {
     label: "Saved payees",
     title: "Lena (contractor)",
-    description: "0x7797…f1e7, added by Simon on Nov 12.",
+    description: "Added by Simon on Nov 12.",
+    address: { value: LENA.address, label: "Lena's address" },
   },
   proposal: {
     label: "explorer.testnet.arc.io",
     title: "Proposal #5 on Arc",
-    description: "Treasury proposal: $2.40 USDC to 0x7797…f1e7, 0 of 1 approvals.",
+    description: "Treasury proposal: $2.40 USDC to Lena, 0 of 1 approvals.",
+    address: { value: LENA.address, label: "Lena's address" },
     url: "https://explorer.testnet.arc.io/address/0xb496FD2D5b29A5b12Ee3d30e7359578fec86e62c",
   },
 };

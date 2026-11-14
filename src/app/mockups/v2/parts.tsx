@@ -7,10 +7,10 @@ import { CircleCheck, MessagesSquare, ShieldCheck } from "lucide-react";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { IconRail, IconRailItem, IconRailSpacer } from "@/components/icon-rail";
 import { OrbAvatar, type OrbHue } from "@/components/orb-avatar";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Spinner } from "@/components/ui/spinner";
 import { Orb, type AgentState } from "@/components/ui/orb";
 import { cn } from "@/lib/utils";
+import { AccountMenu } from "./account-menu";
 import { Button } from "@/components/ui/button";
 import { Trace, TraceCollapsible, TraceCollapsibleContent, TraceCollapsibleTrigger, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace";
 
@@ -52,9 +52,7 @@ export function Shell({ page, children }: { page: "chat" | "permissions"; childr
           <IconRailItem srLabel="Permissions" icon={<ShieldCheck />} active={page === "permissions"} onClick={() => router.push("/mockups/v2/permissions")} />
           <IconRailSpacer />
           <li>
-            <Avatar className="size-8">
-              <AvatarFallback>SY</AvatarFallback>
-            </Avatar>
+            <AccountMenu />
           </li>
         </IconRail>
       </div>

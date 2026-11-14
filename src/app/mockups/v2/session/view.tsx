@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Bot, Coins, Hash, Wallet, Mic, MicOff, PaperclipIcon, PhoneOff, Plus, Search, UserPlus } from "lucide-react";
+import { Bot, Coins, Hash, Info, Wallet, Mic, MicOff, PaperclipIcon, PhoneOff, Plus, Search, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { EmptyState, EmptyStateDescription, EmptyStateTitle } from "@/components/ui/empty-state";
@@ -21,6 +21,7 @@ import type { AgentState } from "@/components/ui/orb";
 import { ShimmeringText } from "@/components/ui/shimmering-text";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Tag } from "@/components/ui/tag";
+import { AgentAbout } from "../agent-about";
 import { AgentList, NewAgentDialog } from "../agents";
 import { Composer, toPicked, type Picked } from "../composer";
 import { Said } from "../mentions";
@@ -68,6 +69,7 @@ export function SessionView() {
   const select = (id: string) => router.replace(`${pathname}?agent=${id}`);
   const selectRoom = (id: string) => router.replace(`${pathname}?room=${id}`);
   const [dialog, setDialog] = useState<null | "room" | "join" | "agent" | "mate">(null);
+  const [showAbout, setShowAbout] = useState(true);
 
   const [inCall, setInCall] = useState(false);
   const [callFrom, setCallFrom] = useState(0); // voice lines before this call (captions show only this call's)
@@ -265,12 +267,24 @@ export function SessionView() {
             <RoomView key={room.id} room={room} files={files} setFiles={setFiles} />
           </main>
         ) : agent ? (
-          <main className="flex min-w-0 flex-1 flex-col">
+          <main className="flex min-w-0 flex-1">
+          <div className="flex min-w-0 flex-1 flex-col">
             <header className="flex items-center gap-1.5 px-8 py-4 text-sm text-muted-foreground">
               <span className="font-medium text-foreground">{agent.name}</span>
               <StatusBadge status={agent.online || inCall ? "online" : "offline"} pulse={agent.online || inCall} className="ml-2">
                 {inCall ? "In a call" : agent.online ? "Working" : "Idle"}
               </StatusBadge>
+              {/* About the agent: its wallet and its place on the treasury (option B) */}
+              <Button
+                variant={showAbout ? "secondary" : "ghost"}
+                size="icon-sm"
+                className="ml-auto"
+                aria-label={`About ${agent.name}`}
+                aria-pressed={showAbout}
+                onClick={() => setShowAbout((s) => !s)}
+              >
+                <Info />
+              </Button>
             </header>
 
             {inCall ? (
@@ -417,6 +431,8 @@ export function SessionView() {
                 <Composer placeholder={`Message ${agent.name}`} files={files} setFiles={setFiles} onSend={sendToAgent} onTalk={startCall} busy={replying} />
               )}
             </div>
+          </div>
+          {showAbout && <AgentAbout agent={agent} onClose={() => setShowAbout(false)} />}
           </main>
         ) : (
           <main className="flex flex-1 items-center justify-center">

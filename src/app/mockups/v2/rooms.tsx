@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import type { Agent } from "./agents";
 import { AgentOrb } from "./parts";
 import type { Room, Teammate } from "./store";
+import { AddressLine, personAddress } from "./money";
 
 export const ME = "simon";
 const GUIDELINES_MAX = 4096;
@@ -157,7 +158,15 @@ function MemberPicker({
                     {m.name}
                     {m.kind === "agent" ? <Tag variant="info">Agent</Tag> : m.t.invited ? <Tag>Invited</Tag> : null}
                   </ItemTitle>
-                  <ItemDescription>{m.kind === "agent" ? m.a.job : `${m.t.role} · ${m.t.wallet}`}</ItemDescription>
+                  <ItemDescription className="flex items-center gap-1">
+                    {m.kind === "agent" ? (
+                      m.a.job
+                    ) : (
+                      <>
+                        {m.t.role} · <AddressLine address={m.t.address ?? personAddress(m.t.id)} label={`${m.name}'s wallet address`} />
+                      </>
+                    )}
+                  </ItemDescription>
                 </ItemContent>
               </label>
             </Item>
@@ -502,6 +511,7 @@ export function InviteTeammateDialog({
                 name: n,
                 initials: n.slice(0, 2).toUpperCase(),
                 wallet: `${w.slice(0, 6)}…${w.slice(-4)}`,
+                address: w,
                 role,
                 invited: true,
               });

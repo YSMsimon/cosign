@@ -15,6 +15,8 @@ import { TableCard, TableCardBody } from "@/components/ui/table-card";
 import { Tag } from "@/components/ui/tag";
 import { AgentOrb, Shell } from "../parts";
 import { useAgents } from "../store";
+import { WalletsTable } from "../wallets-table";
+import { AddressLine, personAddress } from "../money";
 
 const people = [
   { name: "Simon", sub: "0x8f2c…41aa · you", initials: "SY", role: "Owner", cosign: true, request: true },
@@ -76,7 +78,12 @@ export default function PermissionsPage() {
                         <UserRow
                           size="sm"
                           label={p.name}
-                          sublabel={p.sub}
+                          sublabel={
+                            <span className="inline-flex items-center gap-1">
+                              <AddressLine address={personAddress(p.name.toLowerCase())} label={`${p.name}'s wallet address`} />
+                              {p.sub.endsWith("you") && <span className="text-xs text-muted-foreground">· you</span>}
+                            </span>
+                          }
                           avatar={
                             <Avatar className="size-8">
                               <AvatarFallback>{p.initials}</AvatarFallback>
@@ -145,6 +152,13 @@ export default function PermissionsPage() {
                 </Card>
               );
             })}
+          </div>
+        </div>
+
+        <div className="mt-10 mb-16">
+          <SectionHeader title="Wallets and the treasury" description="The treasury contract belongs to the workspace. Every agent has its own wallet, made when the agent is created." />
+          <div className="mt-3">
+            <WalletsTable />
           </div>
         </div>
       </div>
