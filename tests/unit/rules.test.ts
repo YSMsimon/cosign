@@ -70,7 +70,9 @@ test("old script profiles map onto rules", () => {
 test("the agent reads its own rules in policy.md", () => {
   const md = rulesMarkdown("Clerk", base, [{ name: "Lena", address: LENA }]);
   assert.match(md, /per payment \$5/);
-  assert.match(md, /Lena \(0x7797/);
+  assert.match(md, /1 saved payee\. .*context\/contacts\.json \(or call list_allowed\)/, "policy.md points to the one payee list");
+  assert.match(md, /Paid APIs: 1 allowed seller; call list_allowed \(list='sellers'\)/, "and to the seller list");
+  assert.ok(!md.includes(LENA), "and doesn't repeat it");
   assert.match(rulesMarkdown("Clerk", { ...base, controls: { ...base.controls, frozen: true } }, []), /OFF right now \(frozen\)/);
   assert.match(rulesMarkdown("Auditor", { abilities: PRESETS.readonly, controls: base.controls }, []), /Abilities: sandbox/);
 });

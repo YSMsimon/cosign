@@ -27,7 +27,7 @@ const now = () => new Date().toISOString();
 const TASK_TOKEN_MIN = 30;
 const PING_TOKEN_MIN = 5;
 /** Tools the Bot may call through our API (no microVM tools: it has its own computer). */
-export const BOT_TOOLS = new Set(["get_balances", "list_proposals", "discover_services", "paid_fetch", "propose_payment", "request_topup", "memory_write", "memory_read", "memory_search", "memory_archive"]);
+export const BOT_TOOLS = new Set(["get_balances", "list_proposals", "list_allowed", "discover_services", "paid_fetch", "propose_payment", "request_topup", "memory_write", "memory_read", "memory_search", "memory_archive"]);
 
 export const publicBase = (fallback: string) => (process.env.PUBLIC_BASE_URL ?? fallback).replace(/\/$/, "");
 
@@ -227,7 +227,11 @@ export async function startTask(
 /** The task a Bot token belongs to (still valid). */
 export function taskForToken(req: Request): TaskRow {
   const h = req.headers.get("authorization") ?? "";
-  const token = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
+  return taskForRawToken(h.startsWith("Bearer ") ? h.slice(7).trim() : "");
+}
+
+/** The task a token belongs to, wherever the token came from (still valid). */
+export function taskForRawToken(token: string): TaskRow {
   if (!token) throw new HttpError(401, "missing bearer token");
   const t = db()
     .select()

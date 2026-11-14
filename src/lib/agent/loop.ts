@@ -11,10 +11,11 @@
  *  - Grok's built-in web_search / x_search run server-side alongside our policy-checked function tools.
  *  - Every step is logged (JSONL). Server-only.
  */
+import { createHash } from "node:crypto";
 import { createRunLogger, type RunEventHandler, type RunLogger } from "../log";
 import { rebuildIndex } from "./memory";
 import { DEFAULT_COMPACT_AT, loadSession, now, saveSession, shouldCompact, startNewChain, type Session } from "./session";
-import { runToolChecked, toolByName, xaiTools, type AgentContext } from "./tools";
+import { runToolChecked, takeSayFirst, toolByName, xaiTools, type AgentContext } from "./tools";
 
 const XAI = "https://api.x.ai/v1/responses";
 const PRICE = { in: 1.25, cachedIn: 0.2, out: 2.5, searchPer1k: 5 }; // rough list prices, USD
@@ -134,6 +135,8 @@ export async function runAgentTurn(opts: {
   quiet?: boolean;
   onEvent?: RunEventHandler; // live tool calls / results for a terminal or UI
   thread?: string; // separate conversation (per person on a team agent, per schedule); memory stays shared
+  turnNote?: string; // sent to the model with this prompt only (e.g. "this was spoken"), not stored in the transcript
+  via?: "voice"; // how this turn reached us, kept on its transcript entries
 }) {
   const model = opts.model ?? "grok-4.3";
   const maxSteps = opts.maxSteps ?? 16;
@@ -144,14 +147,14 @@ export async function runAgentTurn(opts: {
     { agent, thread: opts.thread ?? null, scope: opts.ctx.scope ?? null, kind: "agent-turn", model, prompt: opts.prompt, run: s.runs, chain: s.chainId, contextTokens: s.lastContextTokens, compactAt: s.compactAt, compactions: s.compactions },
     { quiet: opts.quiet, onEvent: opts.onEvent },
   );
-  const tools = xaiTools(opts.ctx);
+  const tools = xaiTools(opts.ctx, { sayFirst: opts.via === "voice" }); // voice: each call carries a sentence to say first
   const totals = { in: 0, cached: 0, out: 0, webSearches: 0, xSearches: 0, toolCalls: 0, refusals: 0, compactions: 0 };
 
   // memory index: shown at the start of a chain, and again whenever it changed
   const idx = rebuildIndex(agent);
   const memoryChanged = idx.hash !== s.memoryIndexHash;
   s.memoryIndexHash = idx.hash;
-  s.transcript.push({ kind: "user", text: opts.prompt, t: now() });
+  s.transcript.push({ kind: "user", text: opts.prompt, t: now(), ...(opts.via ? { via: opts.via } : {}) });
 
   // compact before this run if the carried-over context is already at the threshold
   if (s.lastResponseId && shouldCompact(s)) {
@@ -159,18 +162,25 @@ export async function runAgentTurn(opts: {
     totals.compactions++;
   }
 
-  const userTurn = (extra = "") => ({ role: "user", content: `${extra ? `${extra}\n\n---\n` : ""}${opts.prompt}` });
+  const userTurn = (extra = "") => {
+    const pre = [extra, opts.turnNote].filter(Boolean).join("\n\n");
+    return { role: "user", content: `${pre ? `${pre}\n\n---\n` : ""}${opts.prompt}` };
+  };
   const freshInput = (extraUser: string) => [
     { role: "system", content: opts.instructions },
     { role: "user", content: freshChainPreamble(s, idx.text) },
     ...(extraUser ? [{ role: "user", content: extraUser }] : []),
   ];
 
+  // the system instructions go out at the start of a chain; if they changed since, send them again once
+  const instructionsHash = createHash("sha256").update(opts.instructions).digest("hex").slice(0, 16);
   let previous: string | undefined = s.lastResponseId;
+  const updated = previous && s.instructionsHash !== instructionsHash ? [{ role: "system", content: `Your instructions were updated. They replace the earlier ones:\n\n${opts.instructions}` }] : [];
   let input: unknown[] = previous
-    ? [userTurn(memoryChanged ? `Your memory index changed:\n${idx.text}` : "")]
+    ? [...updated, userTurn(memoryChanged ? `Your memory index changed:\n${idx.text}` : "")]
     : [...freshInput(""), userTurn()];
   let finalText = "";
+  let nudged = false; // asked once for an answer after an empty reply
 
   try {
     for (let step = 1; step <= maxSteps; step++) {
@@ -200,6 +210,7 @@ export async function runAgentTurn(opts: {
       totals.webSearches += resp.server_side_tool_usage?.web_search_calls ?? 0;
       totals.xSearches += resp.server_side_tool_usage?.x_search_calls ?? 0;
       s.lastResponseId = resp.id;
+      s.instructionsHash = instructionsHash;
       s.lastContextTokens = (u.input_tokens ?? 0) + (u.output_tokens ?? 0);
       if (s.awaitingBaseline) {
         s.postCompactionTokens = s.lastContextTokens;
@@ -207,6 +218,7 @@ export async function runAgentTurn(opts: {
       }
 
       const calls: FnCall[] = [];
+      let saidSomething = false;
       for (const item of resp.output ?? []) {
         if (item.type === "web_search_call" || item.type === "x_search_call") {
           const a = item.action as { query?: string; sources?: { url: string }[] } | undefined;
@@ -217,8 +229,9 @@ export async function runAgentTurn(opts: {
         } else if (item.type === "message") {
           const text = ((item.content as { text?: string }[] | undefined) ?? []).map((c) => c.text ?? "").join("");
           if (text) {
+            saidSomething = true;
             finalText = text;
-            s.transcript.push({ kind: "assistant", text, t: now() });
+            s.transcript.push({ kind: "assistant", text, t: now(), ...(opts.via ? { via: opts.via } : {}) });
           }
         }
       }
@@ -231,7 +244,17 @@ export async function runAgentTurn(opts: {
         outputTokens: u.output_tokens ?? 0,
       });
       saveSession(s);
-      if (!calls.length) break;
+      if (!calls.length) {
+        // Grok sometimes ends a turn with no text at all (seen after a tool call): ask once for the answer
+        if (!saidSomething && !nudged && step < maxSteps) {
+          nudged = true;
+          log.event("empty_reply", { step });
+          previous = resp.id;
+          input = [{ role: "user", content: "(Cosign: your last reply was empty. Answer the person now, using what you already found.)" }];
+          continue;
+        }
+        break;
+      }
 
       // run our tools (policy first)
       const outputs: { call_id: string; name: string; output: string }[] = [];
@@ -245,7 +268,8 @@ export async function runAgentTurn(opts: {
         }
         const t0 = Date.now();
         const tool = toolByName.get(call.name);
-        log.event("tool_call", { tool: call.name, kind: tool?.kind, args });
+        const sayFirst = takeSayFirst(args); // spoken by the voice before the tool runs; never passed to the tool
+        log.event("tool_call", { tool: call.name, kind: tool?.kind, args, ...(sayFirst ? { sayFirst } : {}) });
         const res = await runToolChecked(opts.ctx, call.name, args);
         const output = res.output;
         if (res.status === "refused") {

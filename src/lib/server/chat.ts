@@ -8,6 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Address } from "viem";
 import { agentInstructions } from "../agent/instructions";
+import { payeesOf } from "../agent/controls";
 import { runAgentTurn } from "../agent/loop";
 import { effectiveAbilities, rulesMarkdown } from "../agent/rules";
 import type { AgentContext } from "../agent/tools";
@@ -18,7 +19,6 @@ import { ensureSandbox, sandboxPaths } from "../sandbox";
 import { memberAccess, type Membership } from "./access";
 import { accessOf, rulesOf } from "./agents";
 import { conflict, forbidden } from "./http";
-import { listContacts } from "./workspaces";
 
 export type Actor = { memberId: string | null; permissions: readonly string[] };
 
@@ -26,13 +26,13 @@ export type Actor = { memberId: string | null; permissions: readonly string[] };
 export async function runContext(agent: AgentRow, ws: WorkspaceRow, actor: Actor, o: { taskId?: string | null; vm?: boolean } = {}) {
   const rules = rulesOf(agent);
   const abilities = effectiveAbilities(rules, { canRequestPayments: can(actor.permissions, "payments.request") });
-  const book = new Map(listContacts(ws.id).map((c) => [c.address, c.name]));
-  const payees = rules.controls.allowedPayees.map((a) => ({ name: book.get(a) ?? "saved payee", address: a }));
+  const payees = payeesOf(ws.id, rules.controls.allowedPayees);
   const files = {
     "policy.md": rulesMarkdown(agent.name, { abilities, controls: rules.controls }, payees),
     "contacts.json": JSON.stringify(payees, null, 2),
   };
-  const sb = await ensureSandbox(agent.ref, files, { vm: (o.vm ?? true) && abilities.sandbox });
+  // the microVM starts in the background: only sandbox_bash needs it, and it waits for the start itself
+  const sb = await ensureSandbox(agent.ref, files, { vm: (o.vm ?? true) && abilities.sandbox, wait: false });
   const instructions = agentInstructions({ name: agent.name, company: ws.name, role: agent.prompt, sandbox: sb });
   const ctx: AgentContext = {
     agentRef: agent.ref,
@@ -47,15 +47,34 @@ const g = globalThis as unknown as { __cosignThreadLocks?: Set<string> };
 const locks = (g.__cosignThreadLocks ??= new Set<string>());
 
 /** Run one turn under a lock (one turn at a time per conversation). */
-export async function runTurn(agent: AgentRow, ws: WorkspaceRow, actor: Actor, thread: string, prompt: string, onEvent?: RunEventHandler, taskId?: string | null) {
+export async function runTurn(
+  agent: AgentRow,
+  ws: WorkspaceRow,
+  actor: Actor,
+  thread: string,
+  prompt: string,
+  onEvent?: RunEventHandler,
+  taskId?: string | null,
+  o: { turnNote?: string; via?: "voice" } = {},
+) {
   const key = `${agent.ref}:${thread}`;
   if (locks.has(key)) throw conflict("this conversation is already running a turn; wait for it to finish");
   locks.add(key);
   try {
     const { ctx, instructions } = await runContext(agent, ws, actor, { taskId });
-    return await runAgentTurn({ ctx, instructions, prompt, thread, quiet: true, onEvent });
+    return await runAgentTurn({ ctx, instructions, prompt, thread, quiet: true, onEvent, turnNote: o.turnNote, via: o.via });
   } finally {
     locks.delete(key);
+  }
+}
+
+/** Wait until a conversation has no turn running (a voice turn waits for the person's typed turn, and the reverse). */
+export async function waitForThread(agentRef: string, thread: string, timeoutMs = 120_000) {
+  const key = `${agentRef}:${thread}`;
+  const until = Date.now() + timeoutMs;
+  while (locks.has(key)) {
+    if (Date.now() > until) throw conflict("this conversation is still busy with an earlier turn");
+    await new Promise((r) => setTimeout(r, 50));
   }
 }
 
@@ -71,12 +90,12 @@ export function requireUse(m: Membership, agent: AgentRow) {
 export function readThread(agent: AgentRow, memberId: string) {
   const f = join(sandboxPaths(agent.ref).base, "sessions", `${memberThread(memberId)}.json`);
   if (!existsSync(f)) return { runs: 0, contextTokens: 0, compactions: 0, messages: [] };
-  const s = JSON.parse(readFileSync(f, "utf8")) as { runs: number; lastContextTokens: number; compactions: number; transcript: { kind: string; text?: string; name?: string; t: string }[] };
+  const s = JSON.parse(readFileSync(f, "utf8")) as { runs: number; lastContextTokens: number; compactions: number; transcript: { kind: string; text?: string; name?: string; t: string; via?: string }[] };
   return {
     runs: s.runs,
     contextTokens: s.lastContextTokens,
     compactions: s.compactions,
-    messages: s.transcript.map((e) => (e.kind === "tool" ? { kind: "tool", name: e.name, t: e.t } : { kind: e.kind, text: e.text, t: e.t })),
+    messages: s.transcript.map((e) => (e.kind === "tool" ? { kind: "tool", name: e.name, t: e.t } : { kind: e.kind, text: e.text, t: e.t, ...(e.via ? { via: e.via } : {}) })),
   };
 }
 

@@ -5,6 +5,7 @@
  * allowlists apply. Server-only.
  */
 import { and, eq, gte, sql } from "drizzle-orm";
+import { activityBus } from "../activity/store";
 import { db, schema } from "../db";
 import { id } from "../server/util";
 import { NeedsApproval, PolicyRefusal } from "../x402/buyer";
@@ -25,13 +26,14 @@ function spent(agentId: string, kind: "purchase" | "draft", fromIso: string): nu
   return Number(row?.total ?? 0);
 }
 
-function paymentsLastHour(agentId: string): number {
+/** Purchases and drafts in the last hour, and when the oldest of them happened (it frees the next slot). */
+function paymentsLastHour(agentId: string): { n: number; oldest: string | null } {
   const row = db()
-    .select({ n: sql<number>`count(*)` })
+    .select({ n: sql<number>`count(*)`, oldest: sql<string | null>`min(${schema.agentSpend.createdAt})` })
     .from(schema.agentSpend)
     .where(and(eq(schema.agentSpend.agentId, agentId), sql`${schema.agentSpend.kind} in ('purchase','draft')`, gte(schema.agentSpend.createdAt, since(HOUR))))
     .get();
-  return Number(row?.n ?? 0);
+  return { n: Number(row?.n ?? 0), oldest: row?.oldest ?? null };
 }
 
 const money = (x: number) => `$${Number(x.toFixed(6))}`;
@@ -53,7 +55,13 @@ export function checkLimits(rules: AgentRules, scope: RunScope | undefined, kind
     if (used + amount > cap + 1e-9) return `${name} ${label} budget ${money(cap)} would be exceeded (${money(used)} used)`;
   }
   const max = rules.controls.maxPaymentsPerHour;
-  if (max !== null && paymentsLastHour(scope.agentId) >= max) return `speed limit: at most ${max} payments per hour`;
+  if (max !== null) {
+    const { n, oldest } = paymentsLastHour(scope.agentId);
+    if (n >= max) {
+      const mins = oldest ? Math.max(1, Math.ceil((Date.parse(oldest) + HOUR - Date.now()) / 60_000)) : 60;
+      return `speed limit: at most ${max} payments per hour (a company rule on this agent, not an outside rate limit); the next payment is allowed in about ${mins} minute${mins === 1 ? "" : "s"}`;
+    }
+  }
   return null;
 }
 
@@ -104,6 +112,17 @@ export function beforePurchase(rules: AgentRules, scope: RunScope | undefined, q
   throw new NeedsApproval(reqId, `${money(q.priceUsd)} is above this agent's ask-a-person line ${money(ask)}: waiting for a member to OK request ${reqId}. Try again after it is approved.`);
 }
 
+/** The payees an agent may draft to, named from the workspace contact book, with the contact's notes. */
+export function payeesOf(workspaceId: string | null | undefined, allowed: readonly string[]): { name: string; address: string; notes: string | null }[] {
+  const book = new Map(
+    workspaceId ? db().select().from(schema.contacts).where(eq(schema.contacts.workspaceId, workspaceId)).all().map((c) => [c.address.toLowerCase(), c]) : [],
+  );
+  return allowed.map((a) => {
+    const c = book.get(a.toLowerCase());
+    return { name: c?.name ?? "saved payee (no contact name)", address: a.toLowerCase(), notes: c?.notes ?? null };
+  });
+}
+
 export function recordSpend(scope: RunScope | undefined, kind: "purchase" | "draft" | "topup", amountUsd: number, ref: string | null) {
   if (!scope) return;
   db()
@@ -112,11 +131,42 @@ export function recordSpend(scope: RunScope | undefined, kind: "purchase" | "dra
     .run();
 }
 
-export function recordProposal(scope: RunScope | undefined, treasury: string, proposalId: string) {
+/**
+ * What the live stream tells pages when an agent drafts a payment (activityBus event "proposal.drafted").
+ * taskId is the voice session or Grok Bot / schedule task it came from, so the page in that call can open the cosign card.
+ */
+export type ProposalDrafted = {
+  workspaceId: string;
+  treasury: string;
+  proposalId: string;
+  agentId: string;
+  requestedBy: string | null;
+  taskId: string | null;
+  to: string;
+  amountUsd: string;
+  memo: string;
+  tx: string;
+  at: string;
+};
+
+/** Remember who drafted a proposal, then tell live subscribers. Called only after the draft is onchain. */
+export function recordProposal(scope: RunScope | undefined, treasury: string, proposalId: string, d: { to: string; amountUsd: string; memo: string; tx: string }) {
   if (!scope) return;
-  db()
-    .insert(schema.proposalMeta)
-    .values({ treasury: treasury.toLowerCase(), proposalId, agentId: scope.agentId, requestedBy: scope.memberId, taskId: scope.taskId ?? null, createdAt: new Date().toISOString() })
-    .onConflictDoNothing()
-    .run();
+  const at = new Date().toISOString();
+  const row = { treasury: treasury.toLowerCase(), proposalId, agentId: scope.agentId, requestedBy: scope.memberId, taskId: scope.taskId ?? null, createdAt: at };
+  db().insert(schema.proposalMeta).values(row).onConflictDoNothing().run();
+  const event: ProposalDrafted = {
+    workspaceId: scope.workspaceId,
+    treasury: row.treasury,
+    proposalId,
+    agentId: scope.agentId,
+    requestedBy: row.requestedBy,
+    taskId: row.taskId,
+    to: d.to.toLowerCase(),
+    amountUsd: d.amountUsd,
+    memo: d.memo,
+    tx: d.tx,
+    at,
+  };
+  activityBus.emit("proposal.drafted", event);
 }

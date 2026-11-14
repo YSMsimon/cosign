@@ -13,8 +13,8 @@ import { sandboxPaths } from "../sandbox";
 export const DEFAULT_COMPACT_AT = 150_000; // tokens of context before we compact
 
 export type TranscriptEntry =
-  | { kind: "user"; text: string; t: string }
-  | { kind: "assistant"; text: string; t: string }
+  | { kind: "user"; text: string; t: string; via?: "voice" }
+  | { kind: "assistant"; text: string; t: string; via?: "voice" }
   | { kind: "tool"; name: string; args: unknown; result: string; t: string }
   | { kind: "search"; tool: string; query?: string; t: string }
   | { kind: "summary"; text: string; t: string };
@@ -34,6 +34,7 @@ export type Session = {
   awaitingBaseline?: boolean;
   runs: number;
   memoryIndexHash?: string; // last memory index the agent was shown
+  instructionsHash?: string; // instructions the current chain has seen (re-sent once when they change)
   transcript: TranscriptEntry[];
   ledger: LedgerEntry[]; // money facts, pinned verbatim through compaction
 };

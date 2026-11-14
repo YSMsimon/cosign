@@ -2,12 +2,14 @@
  * Cosign backend API, mounted at /api/v1 (src/app/api/v1/[...path]/route.ts).
  * This table is the API reference: method, path, who may call it, and what it does.
  * Signed-in = wallet sign-in cookie. Bot endpoints use the per-task Bearer token from a Grok Bot webhook;
- * voice tool endpoints use the voice session's token, and the voice webhook is HMAC-signed by ElevenLabs.
+ * the voice custom-LLM endpoint uses the voice session's token (X-Cosign-Auth), and the voice webhook is
+ * HMAC-signed by ElevenLabs.
  */
 import { after } from "next/server";
 import { z } from "zod";
 import { clearCookie, createNonce, endSession, sessionCookie, verifySignIn } from "../auth";
 import { activityBus } from "../activity/store";
+import type { ProposalDrafted } from "../agent/controls";
 import type { ActivityRow } from "../db/schema";
 import { requireAddress, requireAgentMember, requireMember, type Membership } from "./access";
 import { agentDetail, agentView, createAgent, listAgents, onchainStatus, requireSee, retireAgent, sweepAgent, updateAgent } from "./agents";
@@ -17,7 +19,7 @@ import { badRequest, errorResponse, forbidden, HttpError, notFound, parseBody } 
 import { activityMatcher, approverChangeTx, cancelTx, cosignTx, decideApproval, listApprovals, listProposals, workspaceActivity } from "./money";
 import { createSchedule, deleteSchedule, listSchedules, tick, updateSchedule } from "./schedules";
 import { safeEqual } from "./util";
-import { postCall, startVoice, voiceStatus, voiceTool } from "./voice";
+import { postCall, startVoice, voiceLlm, voiceStatus, voiceTaskFor } from "./voice";
 import {
   addContact, createRole, createWorkspace, deleteRole, inviteMember, listContacts, listMembers, listRoles, myWorkspaces, prepareCreate, removeContact,
   removeMember, updateMember, updateRole, workspaceDetail,
@@ -294,23 +296,21 @@ route("POST", "/agents/:ag/voice", async (req, p) => {
   requireUse(m, agent);
   return Response.json(await startVoice(m, agent), { status: 201, headers: { "cache-control": "no-store" } });
 });
-// ElevenLabs' webhook tools (Bearer = the voice session's token; the body is the tool's arguments).
-route("POST", "/voice/tools/:name", async (req, p) => {
-  const task = taskForToken(req);
+// ElevenLabs' custom LLM: every spoken turn is answered by our loop (X-Cosign-Auth = the voice session's token).
+// Both paths, since ElevenLabs may call the configured URL as-is or append /chat/completions to it.
+const voiceTurn = async (req: Request) => {
+  const task = voiceTaskFor(req);
   const raw = await req.text();
-  let args: Record<string, unknown> = {};
-  if (raw.trim()) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      throw badRequest("body must be JSON");
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw badRequest("body must be a JSON object");
-    args = parsed as Record<string, unknown>;
+  let body: unknown;
+  try {
+    body = raw.trim() ? JSON.parse(raw) : {};
+  } catch {
+    throw badRequest("body must be JSON");
   }
-  return voiceTool(task, p.name, args);
-});
+  return voiceLlm(task, body, { signal: req.signal });
+};
+route("POST", "/voice/llm", voiceTurn);
+route("POST", "/voice/llm/chat/completions", voiceTurn);
 // ElevenLabs' post-call webhook (HMAC-signed with the secret saved by `pnpm voice setup`).
 route("POST", "/voice/webhook", async (req) => postCall(await req.text(), req.headers.get("elevenlabs-signature")));
 
@@ -358,12 +358,18 @@ function activityStream(req: Request, m: Membership): Response {
       const onActivity = (row: ActivityRow) => {
         if (matches(row)) send("activity", { ...row, raw: undefined, explorer: `https://explorer.testnet.arc.io/tx/${row.txHash}` });
       };
+      // an agent drafted a payment in this workspace (chat, voice or Grok Bot); taskId names the voice session or task
+      const onDraft = (d: ProposalDrafted) => {
+        if (d.workspaceId === m.workspace.id) send("proposal.drafted", d);
+      };
       activityBus.on("activity", onActivity);
+      activityBus.on("proposal.drafted", onDraft);
       const ping = setInterval(() => controller.enqueue(enc.encode(`: ping\n\n`)), 15_000);
       send("ready", { at: new Date().toISOString() });
       cleanup = () => {
         clearInterval(ping);
         activityBus.off("activity", onActivity);
+        activityBus.off("proposal.drafted", onDraft);
       };
       req.signal.addEventListener("abort", () => {
         cleanup();

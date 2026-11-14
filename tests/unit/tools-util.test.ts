@@ -75,3 +75,35 @@ test("schedule times (UTC): hourly, daily, weekly, always strictly in the future
   assert.throws(() => validateSpec({ every: "day", hour: 25 }));
   assert.deepEqual(validateSpec({ every: "week" }), { every: "week", minute: 0, hour: 9, weekday: 1 });
 });
+
+test("list_allowed: payees from the contact book with notes, sellers with their catalog, one tool", async () => {
+  const { db, schema } = await import("../../src/lib/db");
+  db().insert(schema.contacts).values({ id: `ct_${Math.random()}`, workspaceId: "ws", name: "Lena (contractor)", address: LENA, notes: "invoices monthly", createdBy: null, createdAt: new Date().toISOString() }).onConflictDoNothing().run();
+  const other = "0x00000000000000000000000000000000000000aa";
+  const c = ctx({ ...clerk, controls: { ...clerk.controls, allowedPayees: [LENA, other], allowedSellers: ["localhost:1/api/sellers"] } });
+  const payees = await runToolChecked(c, "list_allowed", { list: "payees" });
+  assert.deepEqual(payees.output, { payees: [
+    { name: "Lena (contractor)", address: LENA, notes: "invoices monthly" },
+    { name: "saved payee (no contact name)", address: other, notes: null },
+  ] });
+  const sellers = (await runToolChecked(c, "list_allowed", { list: "vendors" })).output as { sellers: { seller: string; url: string; services: unknown }[] };
+  assert.equal(sellers.sellers[0].url, "http://localhost:1/api/sellers");
+  assert.match(String(sellers.sellers[0].services), /no catalog published/, "an unreachable seller still shows, with a hint");
+  const all = (await runToolChecked(c, "list_allowed", {})).output as Record<string, unknown>;
+  assert.ok("payees" in all && "sellers" in all, "default: both lists");
+  assert.equal((await runToolChecked(c, "list_allowed", { list: "nope" })).status, "error");
+  const ro = ctx({ ...clerk, abilities: PRESETS.readonly });
+  assert.ok(names(ro).includes("list_allowed"), "a read tool: every agent may look");
+  assert.match(String(((await runToolChecked(ro, "list_allowed", { list: "sellers" })).output as { sellers: string }).sellers), /paid APIs are off/);
+});
+
+test("voice turns: every tool requires a say_first sentence, and the tool never sees it", async () => {
+  const { xaiTools, takeSayFirst } = await import("../../src/lib/agent/tools");
+  const fns = xaiTools(ctx(clerk), { sayFirst: true }).filter((t) => t.type === "function") as { parameters: { required: string[]; properties: Record<string, unknown> } }[];
+  for (const f of fns) assert.ok(f.parameters.required[0] === "say_first" && "say_first" in f.parameters.properties);
+  const chat = xaiTools(ctx(clerk)).filter((t) => t.type === "function") as { parameters: { properties: Record<string, unknown> } }[];
+  assert.ok(chat.every((f) => !("say_first" in f.parameters.properties)), "text chat is unchanged");
+  const args: Record<string, unknown> = { say_first: " I'll check. ", url: "x" };
+  assert.equal(takeSayFirst(args), "I'll check.");
+  assert.deepEqual(args, { url: "x" });
+});

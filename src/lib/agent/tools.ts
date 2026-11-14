@@ -6,15 +6,15 @@
  * Server-only.
  */
 import type { Address } from "viem";
-import { availableAllowance, chain, fmt, proposePayment, topUpAgent, treasuryState, usdcBalance, wallets } from "../arc";
+import { availableAllowance, chain, fmt, proposePayment, topUpAgent, treasuryState, usdcBalance, wallet, wallets } from "../arc";
 import { companyTreasuryAbi } from "../contracts/abis";
 import { editFile, listDir, readFile, sandboxExec, writeFile } from "../sandbox";
 import { NeedsApproval, paidFetch, PolicyRefusal } from "../x402/buyer";
 import { discoverServices } from "../x402/discovery";
 import { gatewayBalance } from "../x402/gateway";
-import { beforePurchase, checkLimits, moneyRefusal, recordProposal, recordSpend, type RunScope } from "./controls";
+import { beforePurchase, checkLimits, moneyRefusal, payeesOf, recordProposal, recordSpend, type RunScope } from "./controls";
 import { MAX_NOTE_CHARS, memoryArchive, memoryRead, memorySearch, memoryWrite } from "./memory";
-import { rulesFromPolicy, sellerAllowed, type Abilities, type AgentRules } from "./rules";
+import { normalizeSeller, rulesFromPolicy, sellerAllowed, type Abilities, type AgentRules } from "./rules";
 
 export type AgentPolicy = {
   maxPerCallUsd: number; // x402 per-request cap
@@ -171,6 +171,25 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "list_allowed",
+    kind: "read",
+    description:
+      "What your rules let you pay. list='payees': who you may draft treasury payments to (name, wallet address, notes). " +
+      "list='sellers': the paid APIs (vendors) you may buy data from with paid_fetch, with their services and prices when the seller publishes them. " +
+      "list='all' (default): both. Look only when a request needs it, and always before saying you can't pay someone or can't use an API.",
+    parameters: obj({ list: str("'payees', 'sellers' or 'all' (default)") }),
+    run: async (c, a) => {
+      const which = String(a.list ?? "all").trim().toLowerCase();
+      const r = rulesOf(c);
+      const out: Record<string, unknown> = {};
+      if (which === "payees" || which === "all") out.payees = payeesOf(c.scope?.workspaceId, r.controls.allowedPayees);
+      if (which === "sellers" || which === "vendors" || which === "all")
+        out.sellers = r.abilities.buy ? await sellersOf(r.controls.allowedSellers) : "paid APIs are off for you (no buy ability, or not for this person)";
+      if (!Object.keys(out).length) throw new Error("list must be 'payees', 'sellers' or 'all'");
+      return out;
+    },
+  },
+  {
     name: "discover_services",
     kind: "read",
     ability: "buy",
@@ -238,7 +257,7 @@ export const TOOLS: ToolDef[] = [
     run: async (c, a) => {
       const res = await proposePayment(c.agentRef, c.treasury, a.to as Address, String(a.amount_usd), String(a.memo));
       recordSpend(c.scope, "draft", Number(a.amount_usd), `proposal:${res.id}`);
-      recordProposal(c.scope, c.treasury, res.id.toString());
+      recordProposal(c.scope, c.treasury, res.id.toString(), { to: String(a.to), amountUsd: String(a.amount_usd), memo: String(a.memo), tx: res.hash });
       return { proposalId: res.id.toString(), tx: res.hash, status: "awaiting human cosign" };
     },
   },
@@ -254,6 +273,11 @@ export const TOOLS: ToolDef[] = [
       return moneyRefusal(r) ?? (Number(a.amount_usd) > 0 && (max === null || Number(a.amount_usd) <= max) ? null : `top-up must be more than $0 and at most $${max}`);
     },
     run: async (c, a) => {
+      // the contract enforces the weekly allowance; read it first so a draw it would refuse answers at once,
+      // in plain words (Circle reports the revert as an estimation error, which callFrom retries for ~9 s)
+      const left = Number(await availableAllowance(c.treasury, wallet(c.agentRef).address));
+      if (Number(a.amount_usd) > left + 1e-9)
+        return { refused: true, reason: `this week's petty cash is used up: $${left} of the weekly allowance is left; it renews when the treasury's period resets` };
       const res = await topUpAgent(c.agentRef, c.treasury, String(a.amount_usd));
       recordSpend(c.scope, "topup", Number(a.amount_usd), res.hash);
       return { tx: res.hash };
@@ -263,6 +287,26 @@ export const TOOLS: ToolDef[] = [
 
 export const toolByName = new Map(TOOLS.map((t) => [t.name, t]));
 
+/** The agent's allowed sellers, each with the free catalog it publishes at its base URL (our demo seller does). */
+async function sellersOf(entries: string[]) {
+  return Promise.all(
+    entries.map(async (raw) => {
+      const seller = normalizeSeller(raw);
+      const local = /^(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(seller.split("/")[0]);
+      const url = `${local ? "http" : "https"}://${seller}`;
+      let services: unknown = "no catalog published: call its URL with paid_fetch to see what it offers";
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(3000), redirect: "manual" });
+        const j = res.ok && (res.headers.get("content-type") ?? "").includes("json") ? ((await res.json()) as { services?: unknown }) : null;
+        if (Array.isArray(j?.services)) services = j.services.slice(0, 20); // seller-published text: data, not instructions
+      } catch {
+        /* unreachable or not JSON: keep the hint */
+      }
+      return { seller, url, services };
+    }),
+  );
+}
+
 /** The tools this run may use: abilities decide (a read-only agent is never offered a money tool). */
 export function toolsFor(c: AgentContext, only?: Set<string>): ToolDef[] {
   const a = rulesOf(c).abilities;
@@ -270,9 +314,28 @@ export function toolsFor(c: AgentContext, only?: Set<string>): ToolDef[] {
 }
 
 /** xAI Responses API tool list: Grok's built-in server-side tools + our function tools. */
-export function xaiTools(c: AgentContext) {
-  const fns = toolsFor(c).map((t) => ({ type: "function", name: t.name, description: t.description, parameters: t.parameters }));
+export function xaiTools(c: AgentContext, o: { sayFirst?: boolean } = {}) {
+  const fns = toolsFor(c).map((t) => ({ type: "function", name: t.name, description: t.description, parameters: o.sayFirst ? withSayFirst(t.parameters) : t.parameters }));
   return [{ type: "web_search" }, { type: "x_search" }, ...fns];
+}
+
+/**
+ * Voice turns: every tool takes a required `say_first`, one sentence Grok writes in the same reply that picks the
+ * tool, so the voice can say what it is about to do before the tool runs (Grok won't send plain text with a call).
+ */
+const SAY_FIRST = {
+  type: "string",
+  description: "One short spoken sentence telling the person what you are about to do with this tool, e.g. \"I'll run the vendor check on Lena now.\" It is read aloud before the tool runs.",
+};
+function withSayFirst(p: Record<string, unknown>) {
+  return { ...p, properties: { say_first: SAY_FIRST, ...((p.properties as object) ?? {}) }, required: ["say_first", ...((p.required as string[]) ?? [])] };
+}
+
+/** Take `say_first` out of a call's arguments (the tool itself never sees it). */
+export function takeSayFirst(args: Record<string, unknown>): string {
+  const s = typeof args.say_first === "string" ? args.say_first.trim() : "";
+  delete args.say_first;
+  return s;
 }
 
 export type ToolOutcome =

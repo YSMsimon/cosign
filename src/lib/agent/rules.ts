@@ -225,12 +225,22 @@ export function rulesMarkdown(name: string, r: AgentRules, payees: { name: strin
   if (!moneyLive(c)) lines.push(`- Money abilities are OFF right now (${c.frozen ? "frozen" : "past the end date"}).`);
   if (r.abilities.buy) {
     lines.push(`- API purchases: per payment ${usd(c.purchases.perPayment)}, per day ${usd(c.purchases.daily)}, per week ${usd(c.purchases.weekly)}, per month ${usd(c.purchases.monthly)}.`);
-    lines.push(`- Sellers you may call with paid_fetch (nothing else is reachable): ${c.allowedSellers.join(", ") || "none"}. paid_fetch runs on Cosign's server, so "localhost" means Cosign's own demo APIs; fetch a seller's base path to list its services.`);
+    const k = c.allowedSellers.length;
+    lines.push(
+      k
+        ? `- Paid APIs: ${k} allowed seller${k === 1 ? "" : "s"}; call list_allowed (list='sellers') for them, their services and prices. Nothing else is reachable with paid_fetch.`
+        : "- Paid APIs: no allowed sellers yet.",
+    );
     if (c.askAboveUsd !== null) lines.push(`- Purchases above $${c.askAboveUsd} wait for a member's OK.`);
   }
   if (r.abilities.draft) {
     lines.push(`- Drafts: per payment ${usd(c.drafts.perPayment)}, per day ${usd(c.drafts.daily)}, per week ${usd(c.drafts.weekly)}, per month ${usd(c.drafts.monthly)}.`);
-    lines.push(`- Payees you may draft to: ${payees.length ? payees.map((p) => `${p.name} (${p.address})`).join(", ") : "none"}.`);
+    const n = payees.length;
+    lines.push(
+      n
+        ? `- Payees you may draft to: ${n} saved payee${n === 1 ? "" : "s"}. Their names, wallet addresses and notes are in context/contacts.json (or call list_allowed). Draft only to a saved payee's address.`
+        : "- Payees you may draft to: none yet.",
+    );
   }
   if (r.abilities.pettyCash) lines.push(`- Petty cash: up to ${usd(c.topUpMaxUsd)} per request; the contract caps the week.`);
   if (c.maxPaymentsPerHour !== null) lines.push(`- At most ${c.maxPaymentsPerHour} payments per hour.`);

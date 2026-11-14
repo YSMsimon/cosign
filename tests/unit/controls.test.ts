@@ -1,7 +1,8 @@
 import "./_env";
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
-import { beforePurchase, checkLimits, moneyRefusal, recordSpend, type RunScope } from "../../src/lib/agent/controls";
+import { activityBus } from "../../src/lib/activity/store";
+import { beforePurchase, checkLimits, moneyRefusal, recordProposal, recordSpend, type ProposalDrafted, type RunScope } from "../../src/lib/agent/controls";
 import { DEFAULT_CONTROLS, mergeControls, PRESETS, type AgentRules } from "../../src/lib/agent/rules";
 import { db, schema } from "../../src/lib/db";
 import { NeedsApproval, PolicyRefusal } from "../../src/lib/x402/buyer";
@@ -49,6 +50,7 @@ test("3. speed limit across purchases and drafts", () => {
   assert.equal(checkLimits(rules, scope, "purchase", 0.001), null);
   recordSpend(scope, "purchase", 0.001, "3");
   assert.match(checkLimits(rules, scope, "purchase", 0.001) ?? "", /speed limit: at most 3 payments per hour/);
+  assert.match(checkLimits(rules, scope, "purchase", 0.001) ?? "", /not an outside rate limit\); the next payment is allowed in about (59|60) minutes/, "says what it is and when it clears");
   recordSpend(scope, "topup", 1, "tx"); // petty cash isn't a payment for the speed limit
 });
 
@@ -82,4 +84,22 @@ test("6. frozen or past the end date: every money action is refused", () => {
 test("without a scope (old script profiles) only the static caps apply", () => {
   assert.equal(checkLimits(rules, undefined, "purchase", 0.05), null);
   assert.match(checkLimits(rules, undefined, "purchase", 0.06) ?? "", /per-payment/);
+});
+
+test("a recorded draft is announced once, with the session it came from", () => {
+  const seen: ProposalDrafted[] = [];
+  const on = (d: ProposalDrafted) => seen.push(d);
+  activityBus.on("proposal.drafted", on);
+  try {
+    recordProposal({ ...scope, taskId: "task_voice_x" }, "0xTREASURY", "7", { to: "0xAbCd", amountUsd: "2.40", memo: "invoice 12", tx: "0xhash" });
+    recordProposal(undefined, "0xTREASURY", "8", { to: "0xAbCd", amountUsd: "1", memo: "no scope", tx: "0xh2" });
+  } finally {
+    activityBus.off("proposal.drafted", on);
+  }
+  assert.equal(seen.length, 1, "no scope, no event (and nothing stored)");
+  const d = seen[0];
+  assert.deepEqual(
+    { ...d, at: undefined },
+    { workspaceId: "ws_test", treasury: "0xtreasury", proposalId: "7", agentId: scope.agentId, requestedBy: "mem_owner", taskId: "task_voice_x", to: "0xabcd", amountUsd: "2.40", memo: "invoice 12", tx: "0xhash", at: undefined },
+  );
 });

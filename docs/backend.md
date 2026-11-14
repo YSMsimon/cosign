@@ -55,6 +55,27 @@ A workspace always keeps at least one All access member.
 - **Who changes what.** Builders create private read-only agents; All access creates team agents and
   turns on money abilities. Anything that loosens limits needs All access; the creator, Approvers and
   All access can tighten or freeze.
+- **Payees and paid APIs.** What an agent may pay reaches it only when it looks: `list_allowed` with
+  `list: payees | sellers | all`. Payees come from the contact book (name, wallet address, notes; also
+  `context/contacts.json` in its microVM); sellers are its paid-API allowlist, each with the free catalog it
+  publishes (services and prices). Both are rebuilt every run from the database, and `policy.md` points to
+  the tool instead of repeating them. The system prompt (fixed, so it stays cached) says to check
+  `list_allowed` before saying it can't pay someone or use an API, to pay a name with that payee's saved
+  address, to refuse an invoice whose name and address belong to different payees, and not to redo an
+  action when a message repeats the last one. Adding a payee = add the contact, then add its address to the
+  agent's allowed payees.
+- **Speed (measured 2026-11-14 through ElevenLabs).** First words 1.2 to 2 s; a balance check about 3 s; a
+  paid vendor check plus a draft about 7 s, mostly Grok thinking (1.5 to 2.5 s per step). Receipts are polled
+  every 0.5 s and Circle's broadcast every 0.3 s (the 4 s and 1 s defaults made each onchain draft take 6 to 8
+  s; now about 1.5 to 2 s). The microVM starts in the background (only sandbox_bash waits for it) and its check
+  is skipped for a minute after it passes. Petty cash reads the remaining allowance before sending, so a draw
+  the contract would refuse answers in about 3 s instead of 13. When ElevenLabs re-sends what the person just
+  said (re-transcribed, e.g. "fifty cents" / "50 cents"), the request joins the running turn instead of
+  queueing a second one. A spoken draft takes about 5 s end to end. Each spoken turn logs one `[voice]` line.
+- **Empty replies.** Grok occasionally ends a turn with no text after a tool call; the loop then asks once
+  more for the answer.
+- **When instructions change** (a new release of the system prompt), the loop re-sends them once to
+  conversations already running, since they normally go out only when a conversation chain starts.
 
 ### Wallet controls (checked by our server before Circle signs)
 
@@ -87,6 +108,17 @@ the API returns `{ chainId, to, data, value, description }`; the frontend sends 
 thinking, web/X searches, tool calls with arguments, results, refusals), then `done` with the answer,
 token use and cost. Each person has their own thread (`GET /agents/:id/thread`); memory is shared.
 
+## Live feed
+
+`GET /workspaces/:ws/activity/stream` (needs `treasury.view`) is one SSE stream per open page:
+- `activity`: decoded onchain treasury events.
+- `proposal.drafted`: sent the moment an agent's draft is onchain, from chat, voice or Grok Bot:
+  `{ workspaceId, treasury, proposalId, agentId, requestedBy, taskId, to, amountUsd, memo, tx, at }`.
+  `taskId` is the voice session or task it came from, so the page in that call opens the cosign card;
+  every page can add it to #approvals. The model never decides what appears on screen.
+
+Events come from an in-process bus, so this needs one long-running server (not serverless functions).
+
 ## Grok Bot (webhook routine)
 
 1. `GET /agents/:id/grokbot` → `setupMessage` for the member to paste into one Bot's own chat in the
@@ -116,23 +148,41 @@ We send `Authorization: Bearer` and `X-Webhook-Key`; `GROKBOT_WEBHOOK_HEADER=<na
 
 ## Voice (ElevenLabs)
 
-ElevenLabs runs the voice conversation (listening, turn-taking, speaking); its tools are webhook tools
-that call us, like Grok Bot. One ElevenLabs agent per Cosign agent, "Cosign: <name>", created by
-`pnpm voice setup`; ids and the post-call webhook secret (encrypted) live in `data/elevenlabs.local.json`.
+Voice is the same agent as the chat, like ChatGPT's voice mode. ElevenLabs does the ears and the mouth
+(microphone, speech-to-text, turn-taking, interruptions, the voice). Its **Custom LLM** setting points at
+us, so every turn is answered by the normal Cosign loop: Grok, all of the agent's tools and checks, in the
+person's own chat thread (type, then talk, then type). ElevenLabs has no tools and no model of its own here;
+its fallback models are switched off, so nothing answers without our rules. One ElevenLabs agent per Cosign
+agent, "Cosign: <name>", created by `pnpm voice setup`; ids and the post-call webhook secret (encrypted) live
+in `data/elevenlabs.local.json`.
 
-1. `POST /agents/:id/voice` (a member who may use the agent) opens a voice session: a task of kind
-   `voice` with its own token (30 minutes). It returns a signed URL (the agent only starts from one) and
-   the conversation's dynamic variables: the agent's job and rules narrowed to that member, and
-   `secret__cosign_auth`, which ElevenLabs puts only in the tool request header, never in the LLM's context.
-2. Each tool call is `POST /voice/tools/{name}` with that token and the arguments as the JSON body.
-   Same checks as the chat, under the member's rights. A refusal answers 200 `{ ok: false, refused }`
-   so the agent can say why. Tools: balances, `list_proposals`, the x402 ones, drafting, top-up, memory.
-   `open_cosign` is a client tool the page handles: it shows the cosign card; the wallet signs.
-3. When the call ends, ElevenLabs' HMAC-signed post-call webhook (`POST /voice/webhook`) closes the
-   session, keeps the summary and transcript on the task, and the token stops working. Retries are harmless.
+1. `POST /agents/:id/voice` (a member who may use the agent) opens a voice session: a task of kind `voice`
+   with its own token (30 minutes). It returns a signed URL (the agent only starts from one) and the
+   conversation's dynamic variables, including `secret__cosign_auth` (the token), which ElevenLabs puts only
+   in a request header and never shows a model. It also starts the agent's microVM, so the first turn is quick.
+2. Each turn is `POST /voice/llm/chat/completions` (OpenAI Chat Completions, streamed), token in `X-Cosign-Auth`.
+   We take the newest thing the person said and run one turn in their thread with a short voice note (spoken
+   sentences, no markdown, no full addresses); the answer is cleaned for speech as a backstop. Before each tool
+   runs, the voice says what Grok is about to do in its own words: on voice turns every tool takes a required
+   `say_first` sentence ("I'll run the vendor check on Lena now."), written in the same reply that picks the
+   tool (Grok won't send plain text alongside a tool call) and spoken the moment the call arrives; the tool never
+   sees it. A call without one gets a canned line; at most three lines per turn; a turn with nothing said after
+   3 seconds gets "One moment please...". Voice only: the chat shows its steps instead. ElevenLabs retries a slow request (it waits up
+   to 15 s): a retry joins the turn already running, or gets its saved answer, so a turn never runs twice.
+   Errors are spoken ("Sorry, something went wrong...") and the call carries on. Silence (ElevenLabs sends
+   "...") gets ElevenLabs' `skip_turn` (Clerk stays quiet until the person speaks), with no model turn and
+   nothing in the thread. Speculative turns are off: a turn can draft a payment, so only finished sentences
+   reach it. Spoken turns are marked
+   `via: "voice"` in the thread; tool calls and turns also go on the session's progress.
+3. A draft made by voice emits `proposal.drafted` with the session id (see Live feed), so the page in that
+   call opens the cosign card. The model never decides what appears on screen.
+4. When the call ends, ElevenLabs' HMAC-signed post-call webhook (`POST /voice/webhook`) closes the
+   session with its summary, and the token stops working. Retries are harmless.
 
-The webhook's URL can't be edited, so `pnpm voice setup` creates a new one when the public URL changes
-and disables the old one.
+The webhook's URL can't be edited, so `pnpm voice setup` creates a new one when the public URL changes and
+disables the old one. Tested live on 2026-11-13: "What's waiting for a cosign?" → `list_proposals` → "Proposal
+four for two dollars forty to Lena is waiting for a cosign" (about 10 s with the tool call); a draft to a
+non-contact was declined.
 
 ## Schedules
 
@@ -161,8 +211,10 @@ pnpm grokbot status
 Voice from the terminal (needs `ELEVENLABS_API_KEY`; run setup again when the public URL changes):
 
 ```bash
-pnpm voice setup        # tools, post-call webhook and the agent "Cosign: Clerk" on ElevenLabs
-pnpm voice test         # opens a session and loads it into the agent's test values; talk in the ElevenLabs dashboard
+pnpm voice setup        # the agent "Cosign: Clerk" on ElevenLabs (brain = our endpoint) and its post-call webhook
+pnpm voice try Clerk "What's waiting for a cosign?"   # a real conversation through ElevenLabs, typed instead of spoken
+pnpm voice test         # one 2-hour test session for the dashboard's test calls (reload the agent page once), until Ctrl-C
+pnpm voice logs Clerk 3  # ElevenLabs' record of the last 3 calls: transcript, time to first sound and full answer, why it ended
 pnpm voice status
 ```
 
@@ -175,9 +227,10 @@ so the stale log is never copied back). Back up `data/` and restart.
 
 ## Tests
 
-- `pnpm test:unit`: 32 tests, no network: roles, agent access, rules and loosening, all seven controls
+- `pnpm test:unit`: 45 tests, no network: roles, agent access, rules and loosening, all seven controls
   against a throwaway database, wallet sign-in, the checked tool runner, schedule times, secret encryption,
-  voice (post-call signatures, tool configs, session tokens, the post-call webhook).
+  the `proposal.drafted` event, `list_allowed`, voice (silence via `skip_turn`, the ElevenLabs agent config, the streamed turn format, "One moment",
+  retries never running a turn twice, spoken errors, speech cleanup, post-call signatures and webhook).
 - `pnpm test:e2e`: 23 tests against the running app on Arc testnet with real throwaway wallets: sign-in,
   creating a company onchain, invites, roles, contacts, agents, controls, onchain setup, chat over SSE
   (Grok), cosigning, adding an approver, Grok Bot connect / tasks / tokens (a mock routine), schedules,
@@ -239,6 +292,6 @@ POST   /api/v1/bot/tools/:name                     Bearer task token, { args }
 POST   /api/v1/bot/tasks/:tid/ack|progress|result  Bearer task token
 GET    /api/v1/agents/:ag/voice                    voice set up?
 POST   /api/v1/agents/:ag/voice                    open a voice session → signed URL + dynamic variables
-POST   /api/v1/voice/tools/:name                   Bearer voice session token, body = the tool's arguments
+POST   /api/v1/voice/llm/chat/completions          ElevenLabs custom LLM: one spoken turn (X-Cosign-Auth = voice session token)
 POST   /api/v1/voice/webhook                       ElevenLabs post-call webhook (HMAC)
 ```

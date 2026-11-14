@@ -39,7 +39,8 @@ export const USDC_DECIMALS = 6;
 export const explorerTx = (h: string) => `${arcTestnet.blockExplorers.default.url}/tx/${h}`;
 export const explorerAddr = (a: string) => `${arcTestnet.blockExplorers.default.url}/address/${a}`;
 
-export const chain = createPublicClient({ chain: arcTestnet, transport: http() });
+// Arc confirms in well under a second; viem's default 4 s polling made every transaction wait up to 4 s extra.
+export const chain = createPublicClient({ chain: arcTestnet, transport: http(), pollingInterval: 500 });
 
 let _circle: ReturnType<typeof initiateDeveloperControlledWalletsClient> | undefined;
 export const circle = () =>
@@ -119,7 +120,7 @@ export async function callFrom<const A extends Abi>(
       fee: FEE,
     });
     try {
-      const done = await circle().getTransaction({ id: tx.data!.id!, waitForTxHash: true });
+      const done = await circle().getTransaction({ id: tx.data!.id!, waitForTxHash: true, pollingInterval: 300 }); // SDK default: 1 s
       hash = done.data!.transaction!.txHash as Hash;
     } catch (e) {
       // Circle can estimate gas on a node a block or two behind ours, so a call that depends on the

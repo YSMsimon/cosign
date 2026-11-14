@@ -21,6 +21,9 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 const ROOT = process.env.SANDBOX_ROOT ?? join(homedir(), ".cosign", "sandboxes");
 const MAX_OUT = 12_000;
+const gs = globalThis as unknown as { __cosignSandboxSeen?: Map<string, number>; __cosignSandboxWarming?: Map<string, Promise<void>> };
+const seen = (gs.__cosignSandboxSeen ??= new Map<string, number>()); // sandbox name → when it was last confirmed running
+const warming = (gs.__cosignSandboxWarming ??= new Map<string, Promise<void>>()); // sandbox name → its start in progress
 
 export type SandboxPaths = { name: string; base: string; workspace: string; context: string };
 
@@ -48,7 +51,7 @@ async function status(name: string): Promise<"running" | "stopped" | "missing"> 
 export async function ensureSandbox(
   agentRef: string,
   contextFiles: Record<string, string> = {},
-  opts: { network?: { policy: "allow" | "deny"; allowHosts?: string[] }; vm?: boolean } = {},
+  opts: { network?: { policy: "allow" | "deny"; allowHosts?: string[] }; vm?: boolean; wait?: boolean } = {},
 ): Promise<SandboxPaths> {
   const p = sandboxPaths(agentRef);
   for (const d of ["memory", "work", "out"]) mkdirSync(join(p.workspace, d), { recursive: true });
@@ -60,6 +63,25 @@ export async function ensureSandbox(
   }
 
   if (opts.vm === false) return p; // folders only (memory, context): no microVM for agents without the sandbox ability
+  // confirmed running in the last minute: skip the two `docker sandbox ls` calls (~0.3 s a turn); if it has
+  // stopped since, `docker sandbox exec` starts it again on its own
+  if (!opts.network && Date.now() - (seen.get(p.name) ?? 0) < 60_000) return p;
+  if (opts.network) {
+    await startVm(p, opts.network);
+    return p;
+  }
+  // one start at a time per sandbox; with wait: false the turn goes on while the VM starts (sandboxExec waits for it)
+  let job = warming.get(p.name);
+  if (!job) {
+    job = startVm(p).finally(() => warming.delete(p.name));
+    warming.set(p.name, job);
+  }
+  if (opts.wait === false) job.catch(() => {});
+  else await job;
+  return p;
+}
+
+async function startVm(p: SandboxPaths, network?: { policy: "allow" | "deny"; allowHosts?: string[] }) {
   const s = await status(p.name);
   if (s === "missing") {
     await docker(["create", "--name", p.name, "-q", "shell", p.workspace, `${p.context}:ro`], 600_000);
@@ -68,16 +90,17 @@ export async function ensureSandbox(
     // `exec` starts a stopped sandbox VM on demand; a no-op command warms it up.
     await docker(["exec", p.name, "true"], 300_000);
   }
-  if (opts.network) {
-    const args = ["network", "proxy", p.name, "--policy", opts.network.policy];
-    for (const h of opts.network.allowHosts ?? []) args.push("--allow-host", h);
+  if (network) {
+    const args = ["network", "proxy", p.name, "--policy", network.policy];
+    for (const h of network.allowHosts ?? []) args.push("--allow-host", h);
     await docker(args);
   }
-  return p;
+  seen.set(p.name, Date.now());
 }
 
 export async function destroySandbox(agentRef: string) {
   const p = sandboxPaths(agentRef);
+  seen.delete(p.name);
   if ((await status(p.name)) !== "missing") await docker(["rm", p.name]);
 }
 
@@ -85,6 +108,7 @@ export async function destroySandbox(agentRef: string) {
 export async function sandboxExec(agentRef: string, command: string, timeoutSec = 60) {
   const p = sandboxPaths(agentRef);
   const t = Math.min(Math.max(timeoutSec, 1), 300);
+  await warming.get(p.name)?.catch(() => {}); // the VM may still be starting in the background
   const started = Date.now();
   try {
     const { stdout, stderr } = await run(
