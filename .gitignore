@@ -62,3 +62,7 @@ contracts/broadcast/
 
 # agent run logs (JSONL)
 logs/
+
+# playwright (browser e2e)
+/test-results/
+/playwright-report/

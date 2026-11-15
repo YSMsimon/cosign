@@ -90,13 +90,30 @@ export function requireUse(m: Membership, agent: AgentRow) {
 export function readThread(agent: AgentRow, memberId: string) {
   const f = join(sandboxPaths(agent.ref).base, "sessions", `${memberThread(memberId)}.json`);
   if (!existsSync(f)) return { runs: 0, contextTokens: 0, compactions: 0, messages: [] };
-  const s = JSON.parse(readFileSync(f, "utf8")) as { runs: number; lastContextTokens: number; compactions: number; transcript: { kind: string; text?: string; name?: string; t: string; via?: string }[] };
+  const s = JSON.parse(readFileSync(f, "utf8")) as {
+    runs: number;
+    lastContextTokens: number;
+    compactions: number;
+    transcript: { kind: string; text?: string; name?: string; args?: Record<string, unknown>; result?: string; t: string; via?: string }[];
+  };
   return {
     runs: s.runs,
     contextTokens: s.lastContextTokens,
     compactions: s.compactions,
-    messages: s.transcript.map((e) => (e.kind === "tool" ? { kind: "tool", name: e.name, t: e.t } : { kind: e.kind, text: e.text, t: e.t, ...(e.via ? { via: e.via } : {}) })),
+    messages: s.transcript.map((e) =>
+      e.kind === "tool" ? { kind: "tool", name: e.name, args: e.args ?? {}, result: parseResult(e.result), t: e.t } : { kind: e.kind, text: e.text, t: e.t, ...(e.via ? { via: e.via } : {}) },
+    ),
   };
+}
+
+/** A stored tool result (JSON, cut at 1,500 characters): the object when it parses, else the start of the text. */
+function parseResult(raw: string | undefined): unknown {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { raw: raw.slice(0, 300) };
+  }
 }
 
 /** Server-Sent Events: every loop event as `event: step`, then `event: done` (or `error`). */

@@ -19,6 +19,7 @@ import { badRequest, errorResponse, forbidden, HttpError, notFound, parseBody } 
 import { activityMatcher, approverChangeTx, cancelTx, cosignTx, decideApproval, listApprovals, listProposals, workspaceActivity } from "./money";
 import { createSchedule, deleteSchedule, listSchedules, tick, updateSchedule } from "./schedules";
 import { listFundingRequests, openOnramp } from "./funding";
+import { agentSpend, workspaceSpend } from "./spend";
 import { handleMcp, issueMcpToken, mcpStatus, revokeMcpTokens } from "./mcp";
 import { listTeam } from "./team";
 import { listTeamMessages, type TeamMessageEvent } from "./team-feed";
@@ -152,11 +153,21 @@ route("GET", "/workspaces/:ws/team/messages", (req, p) => {
 
 // ───────────── agents ─────────────
 route("GET", "/workspaces/:ws/agents", (req, p) => ({ agents: listAgents(requireMember(req, p.ws)) }));
+// what agents spent (the rows the limits read), for the quota tiles and charts
+route("GET", "/workspaces/:ws/spend", (req, p) => {
+  const m = requireMember(req, p.ws, "treasury.view");
+  return workspaceSpend(listAgents(m), Number(new URL(req.url).searchParams.get("days") ?? 30));
+});
+route("GET", "/agents/:ag/spend", (req, p) => {
+  const { m, agent } = requireAgentMember(req, p.ag);
+  requireSee(m, agent);
+  return agentSpend(agent.id, Number(new URL(req.url).searchParams.get("days") ?? 30));
+});
 route("POST", "/workspaces/:ws/agents", async (req, p) => {
   const m = requireMember(req, p.ws);
   const b = await parseBody(
     req,
-    z.object({ name, prompt: text, visibility: z.enum(["private", "team"]), preset: z.enum(["readonly", "buyer", "clerk"]).optional(), allowedRoleIds: z.array(z.string()).nullish(), controls: z.record(z.string(), z.unknown()).optional() }),
+    z.object({ name, prompt: text, visibility: z.enum(["private", "team"]), preset: z.enum(["readonly", "buyer", "clerk"]).optional(), allowedRoleIds: z.array(z.string()).nullish(), controls: z.record(z.string(), z.unknown()).optional(), hue: z.enum(["violet", "pink", "orange", "blue", "teal"]).optional() }),
   );
   const a = await createAgent(m, b);
   return Response.json({ agent: agentView(a, m) }, { status: 201 });

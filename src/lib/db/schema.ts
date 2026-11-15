@@ -130,6 +130,7 @@ export const agents = sqliteTable("agents", {
   walletId: text("wallet_id").notNull(),
   walletAddress: text("wallet_address").notNull(), // lowercase
   status: text("status").notNull().default("active"), // active | retired
+  hue: text("hue"), // its orb colour, picked when it was made (violet | pink | orange | blue | teal)
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

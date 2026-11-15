@@ -46,6 +46,7 @@ export function agentView(a: AgentRow, m: Membership) {
     allowedRoleIds: acc.allowedRoleIds,
     ownerMemberId: a.ownerMemberId,
     status: a.status,
+    hue: a.hue,
     wallet: a.walletAddress,
     abilities: r.abilities,
     controls: r.controls,
@@ -64,7 +65,7 @@ function roleIdsIn(workspaceId: string, ids: string[] | null | undefined): strin
 
 export async function createAgent(
   m: Membership,
-  o: { name: string; prompt: string; visibility: "private" | "team"; preset?: keyof typeof PRESETS; allowedRoleIds?: string[] | null; controls?: unknown },
+  o: { name: string; prompt: string; visibility: "private" | "team"; preset?: keyof typeof PRESETS; allowedRoleIds?: string[] | null; controls?: unknown; hue?: string | null },
 ) {
   if (o.visibility === "team") requirePerm(m, "agents.manage");
   else if (!can(m.permissions, "agents.build") && !can(m.permissions, "agents.manage")) throw forbidden(`your role (${m.role.name}) can't build agents`);
@@ -90,6 +91,7 @@ export async function createAgent(
     walletId: w.id,
     walletAddress: w.address.toLowerCase(),
     status: "active",
+    hue: o.hue ?? null,
     createdAt: now(),
     updatedAt: now(),
   };

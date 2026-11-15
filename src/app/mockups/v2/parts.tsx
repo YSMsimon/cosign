@@ -2,7 +2,7 @@
 
 /** Simple version: two pages (Team, Permissions) and one subpage (a session). Pesto UI + shadcn only. */
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { CircleCheck, ExternalLink, MessagesSquare, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { IconRail, IconRailItem, IconRailSpacer } from "@/components/icon-rail";
@@ -42,19 +42,22 @@ export const sessions: { title: string; agent: AgentId; via: Source; last: strin
   { title: "Month-end notes", agent: "scribe", via: "Schedule", last: "Wrote 3 notes to memory.", when: "Nov 1" },
 ];
 
-/** The app frame: Pesto Icon Rail with two places (rooms and agents, permissions). The Team page was dropped (Simon, 2026-11-14). */
-export function Shell({ page, children }: { page: "chat" | "permissions"; children: React.ReactNode }) {
+/**
+ * The app frame: Pesto Icon Rail with two places (rooms and agents, permissions). The Team page was dropped (Simon, 2026-11-14).
+ * On the design boards (/mockups/v2) it links to the boards; in the app (/chat, /permissions) to the real pages, with
+ * the signed-in account passed as `account`.
+ */
+export function Shell({ page, children, account }: { page: "chat" | "permissions"; children: React.ReactNode; account?: React.ReactNode }) {
   const router = useRouter();
+  const board = usePathname().startsWith("/mockups");
   return (
     <div className="flex h-screen bg-background text-foreground">
       <div className="flex p-3">
         <IconRail srLabel="Cosign" size="sm" className="h-full">
-          <IconRailItem srLabel="Rooms and agents" icon={<MessagesSquare />} active={page === "chat"} onClick={() => router.push("/mockups/v2/session")} />
-          <IconRailItem srLabel="Permissions" icon={<ShieldCheck />} active={page === "permissions"} onClick={() => router.push("/mockups/v2/permissions")} />
+          <IconRailItem srLabel="Rooms and agents" icon={<MessagesSquare />} active={page === "chat"} onClick={() => router.push(board ? "/mockups/v2/session" : "/chat")} />
+          <IconRailItem srLabel="Permissions" icon={<ShieldCheck />} active={page === "permissions"} onClick={() => router.push(board ? "/mockups/v2/permissions" : "/permissions")} />
           <IconRailSpacer />
-          <li>
-            <AccountMenu />
-          </li>
+          <li>{account ?? <AccountMenu />}</li>
         </IconRail>
       </div>
       <div className="min-w-0 flex-1 overflow-auto">{children}</div>

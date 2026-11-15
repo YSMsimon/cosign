@@ -59,7 +59,16 @@ function open() {
     );
   `);
   sqlite.exec(PRODUCT_DDL);
+  migrate(sqlite);
   return drizzle(sqlite, { schema });
+}
+
+/** Columns added after a table first shipped (CREATE TABLE IF NOT EXISTS never changes an existing table). */
+const MIGRATIONS = 1;
+function migrate(sqlite: Database.Database) {
+  const cols = (sqlite.prepare("PRAGMA table_info(agents)").all() as { name: string }[]).map((c) => c.name);
+  if (!cols.includes("hue")) sqlite.exec("ALTER TABLE agents ADD COLUMN hue TEXT");
+  (globalThis as unknown as { __cosignMigrated?: number }).__cosignMigrated = MIGRATIONS;
 }
 
 /** Workspaces, people, agents, Grok Bot, schedules and the team feed (mirrors schema.ts). */
@@ -72,7 +81,7 @@ const PRODUCT_DDL = `
   CREATE TABLE IF NOT EXISTS members (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, address TEXT NOT NULL, role_id TEXT NOT NULL, title TEXT, invited_by TEXT, created_at TEXT NOT NULL, joined_at TEXT, UNIQUE (workspace_id, address));
   CREATE INDEX IF NOT EXISTS members_addr ON members (address);
   CREATE TABLE IF NOT EXISTS contacts (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, name TEXT NOT NULL, address TEXT NOT NULL, notes TEXT, created_by TEXT, created_at TEXT NOT NULL, UNIQUE (workspace_id, address));
-  CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL, visibility TEXT NOT NULL, allowed_role_ids TEXT, owner_member_id TEXT NOT NULL, abilities TEXT NOT NULL, controls TEXT NOT NULL, ref TEXT NOT NULL UNIQUE, wallet_id TEXT NOT NULL, wallet_address TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL, visibility TEXT NOT NULL, allowed_role_ids TEXT, owner_member_id TEXT NOT NULL, abilities TEXT NOT NULL, controls TEXT NOT NULL, ref TEXT NOT NULL UNIQUE, wallet_id TEXT NOT NULL, wallet_address TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', hue TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS agents_ws ON agents (workspace_id);
   CREATE TABLE IF NOT EXISTS agent_spend (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL, kind TEXT NOT NULL, amount_usd TEXT NOT NULL, ref TEXT, member_id TEXT, task_id TEXT, created_at TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS agent_spend_agent ON agent_spend (agent_id, created_at);
@@ -125,6 +134,8 @@ function guardWal() {
 
 export function db() {
   const d = (g.__cosignDb ??= open());
+  // a server that opened the database before a migration shipped runs it once on its open connection
+  if ((globalThis as unknown as { __cosignMigrated?: number }).__cosignMigrated !== MIGRATIONS) migrate((d as unknown as { $client: Database.Database }).$client);
   guardWal();
   return d;
 }

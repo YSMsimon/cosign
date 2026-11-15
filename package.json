@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test:unit": "tsx --test tests/unit/*.test.ts",
     "test:e2e": "tsx --env-file=.env.local --test --test-concurrency=1 tests/e2e/*.test.ts",
+    "test:browser": "playwright test",
     "test": "pnpm test:unit && pnpm test:e2e",
     "agent": "tsx --env-file=.env.local scripts/agent.ts",
     "cosign": "tsx --env-file=.env.local scripts/cosign.ts",
@@ -22,6 +23,7 @@
     "@circle-fin/developer-controlled-wallets": "^10.8.1",
     "@circle-fin/x402-batching": "^4.0.0",
     "@diceui/mention": "^1.0.2",
+    "@elevenlabs/react": "1.20.2",
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
     "@react-three/drei": "^10.7.9",
@@ -52,6 +54,7 @@
   },
   "devDependencies": {
     "@openzeppelin/contracts": "^5.6.1",
+    "@playwright/test": "1.64.1",
     "@tailwindcss/turbopack": "4.3.3",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^20",

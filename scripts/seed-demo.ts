@@ -62,6 +62,7 @@ import { id } from "../src/lib/server/util";
       walletId: w.id,
       walletAddress: w.address.toLowerCase(),
       status: "active",
+      hue: null,
       createdAt: now(),
       updatedAt: now(),
     };

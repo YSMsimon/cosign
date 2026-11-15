@@ -9,8 +9,11 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
 import { Tag } from "@/components/ui/tag";
 import { Usdc } from "./money";
 
-/* mock account (prototype), shaped like /me plus the wallet's balance */
-const me = {
+/** Who is signed in: shaped like /me plus the wallet's balance. */
+export type Account = { name: string; initials: string; address: string; short: string; wallet: string; usdc: number | null; network: string };
+
+/* mock account (design boards) */
+const MOCK: Account = {
   name: "Simon",
   initials: "SY",
   address: "0x8f2c5d1e9b7a3c6f0e4d2b8a1c9e7f5d3b2a41aa",
@@ -26,9 +29,10 @@ const EXPLORER = "https://explorer.testnet.arc.io/address/";
  * Pesto's Account Menu pattern, a Dropdown Menu behind a User Row. Who you are, your balance and network, copy,
  * explorer, sign out. The dot on the avatar is the network: green when the wallet is on Arc.
  */
-export function AccountMenu() {
+export function AccountMenu({ account, onSignOut }: { account?: Account; onSignOut?: () => void }) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
+  const me = account ?? MOCK;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -53,7 +57,7 @@ export function AccountMenu() {
           />
         </DropdownMenuLabel>
         <div className="flex items-center justify-between px-2 pb-2">
-          <Usdc amount={me.usdc} size="md" className="text-sm" />
+          {me.usdc !== null ? <Usdc amount={me.usdc} size="md" className="text-sm" /> : <span className="text-sm text-muted-foreground">Balance unavailable</span>}
           <Tag size="sm" variant="success">
             {me.network}
           </Tag>
@@ -77,7 +81,7 @@ export function AccountMenu() {
           </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" onSelect={() => router.push("/mockups/v2/sign-in")}>
+        <DropdownMenuItem variant="destructive" onSelect={() => (onSignOut ? onSignOut() : router.push("/mockups/v2/sign-in"))}>
           <LogOut /> Sign out
         </DropdownMenuItem>
       </DropdownMenuContent>

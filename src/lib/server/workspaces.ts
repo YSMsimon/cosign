@@ -4,7 +4,8 @@
  */
 import { and, eq, sql } from "drizzle-orm";
 import { decodeEventLog, getAddress, isAddress, keccak256, type Address, type Hash } from "viem";
-import { approversOf, chain, treasuryState } from "../arc";
+import { approversOf, chain, treasuryState, usdcBalance } from "../arc";
+import { formatUnits } from "viem";
 import { companyTreasuryAbi, treasuryFactoryAbi, TREASURY_FACTORY_ADDRESS } from "../contracts/abis";
 import { db, schema } from "../db";
 import { DEFAULT_ROLES, validateCustomRolePermissions, type Permission } from "../perm/permissions";
@@ -82,7 +83,7 @@ export async function createWorkspace(address: string, o: { name: string; txHash
 }
 
 export async function workspaceDetail(m: Membership) {
-  const st = await treasuryState(m.workspace.treasury as Address);
+  const [st, mine] = await Promise.all([treasuryState(m.workspace.treasury as Address), usdcBalance(m.address as Address).catch(() => null)]);
   return {
     workspace: m.workspace,
     treasury: { address: m.workspace.treasury, name: st.name, balanceUsd: st.balance, threshold: st.threshold, paused: st.paused, approvers: st.approvers.map(lc) },
@@ -93,6 +94,7 @@ export async function workspaceDetail(m: Membership) {
       role: { id: m.role.id, name: m.role.name, key: m.role.key },
       permissions: m.permissions,
       onchainApprover: st.approvers.map(lc).includes(m.address),
+      walletUsdc: mine === null ? null : formatUnits(mine, 6),
     },
   };
 }
