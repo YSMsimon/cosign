@@ -7,6 +7,7 @@
  * ToggleGroup, the menus and dialogs Pesto's DropdownMenu and Dialog.
  */
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { EllipsisVertical, Settings2, Trash2 } from "lucide-react";
 import type { OrbHue } from "@/components/orb-avatar";
@@ -115,6 +116,7 @@ export function NewAgentDialog({
 /** The three-dot menu on an agent row: configure it, or delete it (after a confirm). Its colour is set at creation. */
 export function AgentMenu({ agent, onDelete }: { agent: Agent; onDelete: () => void }) {
   const [confirming, setConfirming] = useState(false);
+  const board = usePathname().startsWith("/mockups");
   return (
     <>
       <DropdownMenu>
@@ -125,7 +127,7 @@ export function AgentMenu({ agent, onDelete }: { agent: Agent; onDelete: () => v
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem asChild>
-            <Link href="/mockups/v2/permissions">
+            <Link href={board ? "/mockups/v2/permissions" : `/permissions?agent=${agent.id}`}>
               <Settings2 /> Configure
             </Link>
           </DropdownMenuItem>

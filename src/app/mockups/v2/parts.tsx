@@ -134,8 +134,8 @@ export function Steps({ title, steps, open = false, running = false }: { title: 
         </TraceCollapsibleTrigger>
         <TraceCollapsibleContent>
           <Trace className="mt-2 ml-2 border-l pl-4">
-            {steps.map((s) => (
-              <TraceLine key={s}>
+            {steps.map((s, i) => (
+              <TraceLine key={`${i}-${s}`}>
                 <TraceIcon>
                   <CircleCheck />
                 </TraceIcon>
