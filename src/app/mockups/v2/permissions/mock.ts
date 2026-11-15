@@ -22,6 +22,8 @@ export const clerk = {
     askAboveUsd: 0.05,
     topUpMaxUsd: 1,
     pettyCashPerWeekUsd: 2,
+    allowedSwapTokens: ["EURC"] as string[],
+    maxSlippageBps: 300,
     frozen: false,
     expiresAt: null as string | null,
   },
@@ -34,9 +36,9 @@ export const clerk = {
 /** Every agent always has its own computer (sandbox), so it is not a switch (Simon, 2026-11-14). */
 export type AbilityKey = "buy" | "draft" | "pettyCash";
 export const ABILITIES: { key: AbilityKey; title: string; text: string }[] = [
-  { key: "buy", title: "Pay for APIs", text: "Small purchases from its own wallet (nanopayments)." },
-  { key: "draft", title: "Draft treasury payments", text: "Proposes onchain; a person always approves." },
-  { key: "pettyCash", title: "Petty cash", text: "Draws from the treasury within a weekly allowance." },
+  { key: "buy", title: "Spend from its own wallet", text: "Pays per use from its own wallet: APIs, data, compute or other agents." },
+  { key: "draft", title: "Ask to pay from the treasury", text: "Asks to pay saved payees from the company treasury. A person always approves." },
+  { key: "pettyCash", title: "Refill from the treasury", text: "Tops up its own wallet from the treasury, up to a weekly amount, without asking." },
 ];
 
 export const treasury = {
@@ -84,6 +86,8 @@ const DEFAULT_CONTROLS: typeof clerk.controls = {
   askAboveUsd: 0.05,
   topUpMaxUsd: 1,
   pettyCashPerWeekUsd: 2,
+  allowedSwapTokens: [],
+  maxSlippageBps: 300,
   frozen: false,
   expiresAt: null,
 };

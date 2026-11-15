@@ -7,6 +7,9 @@
  *   pnpm grokbot status [agent]               connection state and the last tasks
  *   pnpm grokbot task [agent] "instructions"  send one task to the Bot and follow its progress
  *   pnpm grokbot disconnect [agent]
+ *   pnpm grokbot mcp [agent]                  issue a connector token for Grok Bot → Add a custom MCP: prints the URL and
+ *                                             copies the Authorization header value to the clipboard (never printed)
+ *   pnpm grokbot mcp-check [agent]            self-test the MCP endpoint over the public URL with a throwaway token
  *
  * [agent] is an agent name in the demo workspace (default: Clerk). Needs `pnpm dev` running and a
  * public URL for it: PUBLIC_BASE_URL in .env.local, or a running ngrok tunnel (found automatically).
@@ -17,6 +20,7 @@ import { createInterface } from "node:readline/promises";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "../src/lib/db";
 import { connect, connectionOf, disconnect, setupMessage, startTask } from "../src/lib/server/grokbot";
+import { issueMcpToken, revokeMcpTokens } from "../src/lib/server/mcp";
 import { checkReachable, demo, follow, publicBase } from "./lib/demo";
 
 const clip = () => execFileSync("pbpaste", { encoding: "utf8" }).trim();
@@ -32,6 +36,54 @@ const clip = () => execFileSync("pbpaste", { encoding: "utf8" }).trim();
     const msg = setupMessage(agent, ws, base);
     execFileSync("pbcopy", { input: msg });
     console.log(`${msg}\n\n── copied to the clipboard (public URL ${base}). Paste it into ONE Bot's own chat in Grok Bot.`);
+    return;
+  }
+
+  if (cmd === "mcp") {
+    const base = await publicBase();
+    const { token, expiresAt } = issueMcpToken(m, agent);
+    execFileSync("pbcopy", { input: `Bearer ${token}` });
+    console.log(`Grok Bot → Plugins → Add a custom MCP, for "${agent.name}":
+  URL:                  ${base}/api/v1/mcp
+  Authorization header: copied to your clipboard (Bearer …, never shown here); paste it as the header value
+  Expires:              ${expiresAt} (issuing a new one revokes this one)`);
+    return;
+  }
+
+  if (cmd === "mcp-check") {
+    // a throwaway token, a few JSON-RPC calls over the public URL, then revoke: proves the endpoint end to end
+    const base = await publicBase();
+    const { token } = issueMcpToken(m, agent);
+    const rpc = async (method: string, params: Record<string, unknown> = {}, id: number | null = 1) => {
+      const r = await fetch(`${base}/api/v1/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}`, "ngrok-skip-browser-warning": "1" },
+        body: JSON.stringify(id === null ? { jsonrpc: "2.0", method, params } : { jsonrpc: "2.0", id, method, params }),
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a JSON-RPC answer read loosely in a check script
+      return { status: r.status, body: r.status === 202 ? null : ((await r.json()) as Record<string, any>) };
+    };
+    try {
+      const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "cosign-check", version: "1" } });
+      console.log(`initialize  ${init.status}  protocol ${init.body?.result?.protocolVersion}  server "${init.body?.result?.serverInfo?.title}"`);
+      const note = await rpc("notifications/initialized", {}, null);
+      console.log(`initialized ${note.status} (notification, no body)`);
+      const list = await rpc("tools/list", {}, 2);
+      const names = (list.body?.result?.tools ?? []).map((t: { name: string }) => t.name);
+      console.log(`tools/list  ${list.status}  ${names.length} tools: ${names.join(", ")}`);
+      const team = await rpc("tools/call", { name: "list_team", arguments: {} }, 3);
+      const teamOut = JSON.parse(team.body?.result?.content?.[0]?.text ?? "{}");
+      console.log(`list_team   ${team.status}  isError=${team.body?.result?.isError}  people=${teamOut.people?.length} agents=${(teamOut.agents ?? []).map((a: { name: string }) => a.name).join(", ")}`);
+      const bal = await rpc("tools/call", { name: "get_balances", arguments: {} }, 4);
+      console.log(`get_balances ${bal.status} isError=${bal.body?.result?.isError}  ${String(bal.body?.result?.content?.[0]?.text ?? "").slice(0, 160)}`);
+      const vm = await rpc("tools/call", { name: "sandbox_bash", arguments: { command: "id" } }, 5);
+      console.log(`sandbox_bash ${vm.status} isError=${vm.body?.result?.isError}  ${String(vm.body?.result?.content?.[0]?.text ?? vm.body?.error?.message ?? "").slice(0, 120)}`);
+      const bad = await fetch(`${base}/api/v1/mcp`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer nope", "ngrok-skip-browser-warning": "1" }, body: "{}" });
+      console.log(`bad token   ${bad.status}  ${bad.headers.get("www-authenticate") ?? ""}`);
+    } finally {
+      revokeMcpTokens(m, agent);
+      console.log("throwaway token revoked");
+    }
     return;
   }
 

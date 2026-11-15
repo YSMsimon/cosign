@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   // native / server-only modules must not be bundled
-  serverExternalPackages: ["better-sqlite3"],
+  serverExternalPackages: ["better-sqlite3", "@circle-fin/app-kit", "@circle-fin/adapter-circle-wallets"],
   cacheComponents: true,
   // the dev-only "N" badge sits bottom-left by default, on top of the rail's account avatar
   devIndicators: { position: "bottom-right" },

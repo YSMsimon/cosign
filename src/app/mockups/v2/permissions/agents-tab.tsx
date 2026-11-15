@@ -1,15 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { Bot, ChartArea, Coins } from "lucide-react";
+import { Bot, ChartArea } from "lucide-react";
 import { SectionHeader } from "@/components/section-header";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AgentOrb } from "../parts";
 import { useAgents } from "../store";
-import { AbilitiesPanel, ControlTiles, PayeesPanel } from "./agent-controls";
-import { LimitsView } from "./limits";
-import { hasMoney, setupFor, type AbilityKey } from "./mock";
+import { ControlTiles } from "./agent-controls";
+import { AgentSettings } from "./agent-settings";
+import { setupFor, type AbilityKey } from "./mock";
 
 /**
  * The Agents tab: pick an agent, then its spending (B, charts) and its settings (A). The rule pipeline (C) and money
@@ -39,7 +39,6 @@ export function AgentsTab() {
   const agent = agents.find((x) => x.id === picked) ?? agents[0];
   const base = setupFor(agent);
   const a = { ...base, abilities: { ...base.abilities, ...changed[agent.id] } };
-  const money = hasMoney(a.abilities);
   const onAbility = (key: AbilityKey, on: boolean) => setChanged((c) => ({ ...c, [agent.id]: { ...c[agent.id], [key]: on } }));
 
   return (
@@ -55,8 +54,8 @@ export function AgentsTab() {
         </TabsList>
       </Tabs>
 
-      {money && (
-        <section className="flex flex-col gap-3">
+      {/* always here (with or without money), so turning the first switch on never pushes Settings down */}
+      <section className="flex flex-col gap-3">
           <SectionHeader title="Spending" description={`What ${a.name} spent and how close it is to each limit.`} />
           {a.history ? (
             <ControlTiles />
@@ -71,27 +70,12 @@ export function AgentsTab() {
               </EmptyHeader>
             </Empty>
           )}
-        </section>
-      )}
+      </section>
 
       <section id={`${a.id}-settings`} className="flex scroll-mt-6 flex-col gap-3">
-        <SectionHeader title="Settings" description="Checked by our server before anything is signed; petty cash is also enforced by the treasury contract." />
+        <SectionHeader title="Settings" description="Checked by our server before anything is signed; the treasury contract also enforces refills and approvals." />
         <div className="grid grid-cols-2 gap-4">
-          {money && <LimitsView key={a.id} a={a} />}
-          <AbilitiesPanel a={a} onAbility={onAbility} />
-          {money ? (
-            <PayeesPanel a={a} />
-          ) : (
-            <Empty className="border border-dashed">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <Coins />
-                </EmptyMedia>
-                <EmptyTitle>No money</EmptyTitle>
-                <EmptyDescription>Turn on Pay for APIs, Draft treasury payments or Petty cash to set {a.name}&apos;s limits.</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          )}
+          <AgentSettings key={a.id} a={a} onAbility={onAbility} />
         </div>
       </section>
 

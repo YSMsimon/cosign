@@ -310,6 +310,20 @@ export function toolPhrase(tool: string, args: Record<string, unknown> = {}): st
       return "Drafting the payment...";
     case "request_topup":
       return "Drawing petty cash...";
+    case "send_usdc":
+      return "Sending the USDC from my wallet...";
+    case "swap":
+      return args.dry_run ? "Checking the swap price..." : "Swapping in my wallet...";
+    case "bridge":
+      return "Bridging the USDC over CCTP...";
+    case "gateway_deposit":
+      return "Topping up my Gateway balance...";
+    case "earn":
+      return "Checking the earn vault...";
+    case "borrow":
+      return "Checking the borrow rates...";
+    case "request_funds":
+      return "Asking someone to add funds to the treasury...";
     case "list_team":
       return "Checking who's on the team...";
     case "mention":

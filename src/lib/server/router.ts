@@ -18,6 +18,8 @@ import { botContext, botTool, callback, connect, connectionOf, connectionView, d
 import { badRequest, errorResponse, forbidden, HttpError, notFound, parseBody } from "./http";
 import { activityMatcher, approverChangeTx, cancelTx, cosignTx, decideApproval, listApprovals, listProposals, workspaceActivity } from "./money";
 import { createSchedule, deleteSchedule, listSchedules, tick, updateSchedule } from "./schedules";
+import { listFundingRequests, openOnramp } from "./funding";
+import { handleMcp, issueMcpToken, mcpStatus, revokeMcpTokens } from "./mcp";
 import { listTeam } from "./team";
 import { listTeamMessages, type TeamMessageEvent } from "./team-feed";
 import { safeEqual } from "./util";
@@ -245,6 +247,32 @@ route("GET", "/tasks/:tid", (req, p) => {
   const { m, agent } = requireAgentMember(req, t.agentId);
   requireSee(m, agent);
   return { task: taskView(t) };
+});
+
+// money in: an approver opens Circle's onramp for the treasury (from an agent's funding request, or on their own)
+route("GET", "/workspaces/:ws/funding-requests", (req, p) => ({ requests: listFundingRequests(requireMember(req, p.ws).workspace.id) }));
+route("POST", "/workspaces/:ws/onramp", async (req, p) => {
+  const m = requireMember(req, p.ws);
+  const b = await parseBody(req, z.object({ requestId: z.string().optional(), amountUsd: z.number().positive().max(10_000).optional() }));
+  return openOnramp(m, b);
+});
+
+// MCP: Cosign's tools for Grok Bot's "Add a custom MCP" (URL + Authorization header with a connector token)
+route("POST", "/mcp", (req) => handleMcp(req));
+route("GET", "/mcp", () => new Response(null, { status: 405, headers: { Allow: "POST" } }));
+route("DELETE", "/mcp", () => new Response(null, { status: 405, headers: { Allow: "POST" } }));
+route("GET", "/agents/:ag/mcp-token", (req, p) => {
+  const { agent } = requireAgentMember(req, p.ag);
+  return mcpStatus(agent.id);
+});
+route("POST", "/agents/:ag/mcp-token", (req, p) => {
+  const { m, agent } = requireAgentMember(req, p.ag);
+  const t = issueMcpToken(m, agent);
+  return { url: `${publicBase(origin(req))}/api/v1/mcp`, header: "Authorization", value: `Bearer ${t.token}`, expiresAt: t.expiresAt, note: "shown once; paste the URL and this header into Grok Bot → Add a custom MCP" };
+});
+route("DELETE", "/agents/:ag/mcp-token", (req, p) => {
+  const { m, agent } = requireAgentMember(req, p.ag);
+  return revokeMcpTokens(m, agent);
 });
 
 // schedules (stored here; due ones go to Grok Bot, or our own loop when no Bot is connected)

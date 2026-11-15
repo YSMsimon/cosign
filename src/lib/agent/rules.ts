@@ -24,6 +24,11 @@ export type Controls = {
   askAboveUsd: number | null; // 5: purchases above this wait for a member's OK
   topUpMaxUsd: number | null; // per petty-cash request (the onchain weekly allowance is the hard ceiling)
   pettyCashPerWeekUsd: number | null; // the onchain weekly allowance an approver should set
+  allowedSwapTokens: string[]; // tokens its own wallet may swap USDC into (Circle App Kit; on Arc testnet: EURC)
+  maxSlippageBps: number | null; // the most a swap's price may move, in basis points (300 = 3%)
+  allowedBridgeChains: string[]; // chains its own wallet may bridge USDC to over CCTP (App Kit names, e.g. Base_Sepolia)
+  earnVaults: string[]; // Earn vault addresses its own wallet may deposit into
+  borrowMarkets: string[]; // borrow market ids it may look up (quotes only: App Kit can't borrow from an EOA wallet)
   frozen: boolean; // 6: money abilities off now
   expiresAt: string | null; // 6: money abilities switch off after this time (ISO)
 };
@@ -45,11 +50,20 @@ export const DEFAULT_CONTROLS: Controls = {
   askAboveUsd: null,
   topUpMaxUsd: 1,
   pettyCashPerWeekUsd: 2,
+  allowedSwapTokens: [],
+  maxSlippageBps: 300,
+  allowedBridgeChains: [],
+  earnVaults: [],
+  borrowMarkets: [],
   frozen: false,
   expiresAt: null,
 };
 
 export class RulesError extends Error {}
+
+/** Tokens Circle App Kit swaps on Arc (USDC is what the agent pays with). */
+// what App Kit can actually route from USDC on Arc testnet (cirBTC: "No route available", checked 2026-11-15)
+export const SWAP_TOKENS = ["EURC"] as const;
 
 const nn = (v: unknown, field: string): number | null => {
   if (v === null || v === undefined) return null;
@@ -133,6 +147,22 @@ export function mergeControls(current: Controls, patch: unknown): Controls {
       return true;
     });
   };
+  const tokens = (v: unknown) => {
+    if (!Array.isArray(v)) throw new RulesError("allowedSwapTokens must be a list of tokens");
+    const named = v.map((raw) => {
+      const t = String(raw).trim();
+      const known = SWAP_TOKENS.find((x) => x.toLowerCase() === t.toLowerCase());
+      if (!known) throw new RulesError(`can't swap to "${t}" (on Arc: ${SWAP_TOKENS.join(", ")})`);
+      return known as string;
+    });
+    return [...new Set(named)]; // normalise first, then drop repeats ("eurc" and "EURC" are one token)
+  };
+  const names = (v: unknown, field: string, re: RegExp) => {
+    if (!Array.isArray(v)) throw new RulesError(`${field} must be a list`);
+    const xs = v.map((x) => String(x).trim());
+    for (const x of xs) if (!re.test(x)) throw new RulesError(`bad ${field} entry "${x}"`);
+    return [...new Set(xs)];
+  };
   let expiresAt = current.expiresAt;
   if ("expiresAt" in p) {
     if (p.expiresAt === null) expiresAt = null;
@@ -151,6 +181,11 @@ export function mergeControls(current: Controls, patch: unknown): Controls {
     askAboveUsd: "askAboveUsd" in p ? nn(p.askAboveUsd, "askAboveUsd") : current.askAboveUsd,
     topUpMaxUsd: "topUpMaxUsd" in p ? nn(p.topUpMaxUsd, "topUpMaxUsd") : current.topUpMaxUsd,
     pettyCashPerWeekUsd: "pettyCashPerWeekUsd" in p ? nn(p.pettyCashPerWeekUsd, "pettyCashPerWeekUsd") : current.pettyCashPerWeekUsd,
+    allowedSwapTokens: "allowedSwapTokens" in p ? tokens(p.allowedSwapTokens) : (current.allowedSwapTokens ?? []),
+    maxSlippageBps: "maxSlippageBps" in p ? nn(p.maxSlippageBps, "maxSlippageBps") : (current.maxSlippageBps ?? DEFAULT_CONTROLS.maxSlippageBps),
+    allowedBridgeChains: "allowedBridgeChains" in p ? names(p.allowedBridgeChains, "allowedBridgeChains", /^[A-Za-z][A-Za-z0-9_]{1,40}$/) : (current.allowedBridgeChains ?? []),
+    earnVaults: "earnVaults" in p ? names(p.earnVaults, "earnVaults", /^0x[0-9a-fA-F]{40}$/).map((x) => x.toLowerCase()) : (current.earnVaults ?? []),
+    borrowMarkets: "borrowMarkets" in p ? names(p.borrowMarkets, "borrowMarkets", /^0x[0-9a-fA-F]{64}$/).map((x) => x.toLowerCase()) : (current.borrowMarkets ?? []),
     frozen: "frozen" in p ? Boolean(p.frozen) : current.frozen,
     expiresAt,
   };
@@ -175,6 +210,14 @@ export function loosens(a: AgentRules, b: AgentRules): string[] {
   cap(a.controls.askAboveUsd, b.controls.askAboveUsd, "askAboveUsd");
   cap(a.controls.topUpMaxUsd, b.controls.topUpMaxUsd, "topUpMaxUsd");
   cap(a.controls.pettyCashPerWeekUsd, b.controls.pettyCashPerWeekUsd, "pettyCashPerWeekUsd");
+  cap(a.controls.maxSlippageBps ?? 300, b.controls.maxSlippageBps ?? 300, "maxSlippageBps");
+  if ((b.controls.allowedSwapTokens ?? []).some((t) => !(a.controls.allowedSwapTokens ?? []).includes(t))) why.push("adds swap tokens");
+  const adds = (k: "allowedBridgeChains" | "earnVaults" | "borrowMarkets", what: string) => {
+    if ((b.controls[k] ?? []).some((x) => !(a.controls[k] ?? []).includes(x))) why.push(`adds ${what}`);
+  };
+  adds("allowedBridgeChains", "bridge chains");
+  adds("earnVaults", "earn vaults");
+  adds("borrowMarkets", "borrow markets");
   if (b.controls.allowedSellers.some((h) => !a.controls.allowedSellers.includes(h))) why.push("adds sellers");
   if (b.controls.allowedPayees.some((x) => !a.controls.allowedPayees.includes(x))) why.push("adds payees");
   if (a.controls.frozen && !b.controls.frozen) why.push("unfreezes");
@@ -211,6 +254,11 @@ export function rulesFromPolicy(p: AgentPolicy): AgentRules {
       allowedPayees: p.allowedPayees.map((a) => (a as Address).toLowerCase()),
       topUpMaxUsd: p.maxTopUpUsd,
       pettyCashPerWeekUsd: null,
+      allowedSwapTokens: [],
+      maxSlippageBps: 300,
+      allowedBridgeChains: [],
+      earnVaults: [],
+      borrowMarkets: [],
     },
   };
 }
@@ -232,7 +280,20 @@ export function rulesMarkdown(name: string, r: AgentRules, payees: { name: strin
         : "- Paid APIs: no allowed sellers yet.",
     );
     if (c.askAboveUsd !== null) lines.push(`- Purchases above $${c.askAboveUsd} wait for a member's OK.`);
+    lines.push("- From your own wallet you may also send USDC to a saved payee (send_usdc); it counts as a purchase for every limit above.");
+    const sw = c.allowedSwapTokens ?? [];
+    lines.push(
+      sw.length
+        ? `- Swaps: your own wallet may swap USDC into ${sw.join(", ")} (swap), with the price moving at most ${(c.maxSlippageBps ?? 300) / 100}%; the USDC counts as a purchase for every limit above, and the tokens come back to your wallet.`
+        : "- Swaps: none allowed.",
+    );
+    const br = c.allowedBridgeChains ?? [];
+    lines.push(br.length ? `- Bridge (bridge): USDC to a saved payee or your own wallet on ${br.join(", ")}; amount plus fees count as a purchase.` : "- Bridge: no chains allowed.");
+    lines.push("- Gateway (gateway_deposit): you may move USDC from your wallet into your own Gateway balance (what nanopayments spend); it counts as a purchase.");
+    lines.push((c.earnVaults ?? []).length ? "- Earn (earn): deposit into or withdraw from your allowed Earn vaults; deposits count as a purchase." : "- Earn: no vaults allowed.");
+    lines.push((c.borrowMarkets ?? []).length ? "- Borrow (borrow): market list and quotes only; this wallet can't take a loan." : "- Borrow: not allowed.");
   }
+  lines.push("- If the treasury is too short for what the company needs, ask a person to add funds with request_funds; you never buy crypto yourself.");
   if (r.abilities.draft) {
     lines.push(`- Drafts: per payment ${usd(c.drafts.perPayment)}, per day ${usd(c.drafts.daily)}, per week ${usd(c.drafts.weekly)}, per month ${usd(c.drafts.monthly)}.`);
     const n = payees.length;

@@ -25,7 +25,8 @@ const GAS_FLOOR = parseUnits("0.02", 18); // below this an agent can't pay gas f
 const GAS_TOP_UP = parseUnits("0.05", 18);
 const SWEEP_RESERVE = parseUnits("0.003", 18); // left behind to pay for the sweep itself
 
-export const rulesOf = (a: AgentRow): AgentRules => ({ abilities: JSON.parse(a.abilities) as Abilities, controls: JSON.parse(a.controls) as Controls });
+/** An agent's saved rules; controls added later (e.g. swap tokens) fall back to the defaults. */
+export const rulesOf = (a: AgentRow): AgentRules => ({ abilities: JSON.parse(a.abilities) as Abilities, controls: { ...DEFAULT_CONTROLS, ...(JSON.parse(a.controls) as Partial<Controls>) } });
 export const accessOf = (a: AgentRow): AgentAccess => ({
   status: a.status,
   visibility: a.visibility as "private" | "team",

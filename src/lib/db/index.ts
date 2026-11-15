@@ -1,19 +1,32 @@
 /**
- * Local SQLite (Drizzle + better-sqlite3). One file: data/cosign.db (gitignored).
+ * Local SQLite (Drizzle + better-sqlite3). One file: ~/.cosign/cosign.db (COSIGN_DB overrides it).
+ *
+ * It lives OUTSIDE the project folder on purpose. The dev server's file watcher (Turbopack, inside the same
+ * process) reads files in the project that change, and the database changes on every write. On macOS, when any
+ * code in a process opens and closes a file, the OS drops every lock that process holds on it, SQLite's included.
+ * The server then holds the database without its locks, and the next script that opens and closes it (pnpm grokbot,
+ * pnpm voice, the evals) looks like the last user and deletes the write-ahead log under the server: a split.
+ * Out of the watched folder, nothing else in the server touches the file, and scripts are safe to run.
  * Tables are created on first use (no migration step needed for the hackathon).
  * Server-only.
  */
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { mkdirSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import * as schema from "./schema";
 
-const DB_FILE = process.env.COSIGN_DB ?? "data/cosign.db";
+const DB_FILE = process.env.COSIGN_DB ?? join(homedir(), ".cosign", "cosign.db");
+const OLD_DB_FILE = "data/cosign.db"; // where it used to live, inside the project
 
 const g = globalThis as unknown as { __cosignDb?: ReturnType<typeof open> };
 
 function open() {
+  if (!process.env.COSIGN_DB && !existsSync(DB_FILE) && existsSync(OLD_DB_FILE)) {
+    throw new Error(`[cosign] the database moved out of the project: stop the dev server, then move ${OLD_DB_FILE} (and any -wal / -shm next to it) to ${DB_FILE}`);
+  }
   mkdirSync(dirname(DB_FILE), { recursive: true });
   const sqlite = new Database(DB_FILE);
   sqlite.pragma("journal_mode = WAL");
@@ -72,6 +85,8 @@ const PRODUCT_DDL = `
   CREATE TABLE IF NOT EXISTS team_messages (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, from_kind TEXT NOT NULL, from_id TEXT, to_kind TEXT, to_id TEXT, text TEXT NOT NULL, task_id TEXT, from_task_id TEXT, root_id TEXT NOT NULL, depth INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS team_messages_ws ON team_messages (workspace_id, created_at);
   CREATE INDEX IF NOT EXISTS team_messages_task ON team_messages (task_id);
+  CREATE TABLE IF NOT EXISTS funding_requests (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, agent_id TEXT NOT NULL, requested_by TEXT, asked_member_id TEXT NOT NULL, amount_usd TEXT NOT NULL, reason TEXT NOT NULL, status TEXT NOT NULL, session_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS mcp_tokens (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, agent_id TEXT NOT NULL, member_id TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, revoked_at TEXT, last_used_at TEXT);
 `;
 
 /** Raw better-sqlite3 handle, for the few places that want plain synchronous SQL. */
@@ -80,7 +95,7 @@ export function sqlite(): Database.Database {
 }
 
 /**
- * Split guard. While this process has the database open, its write-ahead log (data/cosign.db-wal) must
+ * Split guard. While this process has the database open, its write-ahead log (cosign.db-wal) must
  * stay the same file. Twice on 2026-11-13 it was deleted under the running dev server (another process
  * closed the database after the server's file locks had been dropped), so the server kept writing to a
  * log nobody else could see. If that happens, stop this process at once WITHOUT closing the database:

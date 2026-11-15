@@ -158,3 +158,19 @@ test("8. when a mentioned agent finishes, its answer is posted back to the team 
   callback({ ...t2, status: "working" } as TaskRow, "result", { error: "invoice 122 not found" });
   assert.ok(listTeamMessages(WS, 50).some((m) => m.fromTaskId === t2.id && m.text === "Couldn't finish: invoice 122 not found"));
 });
+
+test("9. a refusal the tool finds while running counts as a refusal (logs, Grok Bot, MCP), not a success", async () => {
+  const { runToolChecked } = await import("../../src/lib/agent/tools");
+  const { DEFAULT_CONTROLS } = await import("../../src/lib/agent/rules");
+  const ctx = {
+    agentRef: "ref-clerk",
+    treasury: "0x00000000000000000000000000000000000000aa" as const,
+    rules: { abilities: { buy: false, draft: false, pettyCash: false, sandbox: false }, controls: DEFAULT_CONTROLS },
+    scope: { agentId: "ag_clerk", workspaceId: WS, memberId: "mem_simon" },
+  };
+  const self = await runToolChecked(ctx, "mention", { who: "Clerk", message: "remind me" });
+  assert.equal(self.status, "refused");
+  assert.match(self.status === "refused" ? self.reason : "", /can't mention yourself/);
+  const fine = await runToolChecked(ctx, "mention", { who: "Priya", message: "please review #9" });
+  assert.equal(fine.status, "ok");
+});

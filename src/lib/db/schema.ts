@@ -247,6 +247,34 @@ export const teamMessages = sqliteTable("team_messages", {
   createdAt: text("created_at").notNull(),
 });
 
+/** An agent asked for money: a person buys USDC into the treasury through Circle's onramp (server/funding.ts). */
+export const fundingRequests = sqliteTable("funding_requests", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  agentId: text("agent_id").notNull(),
+  requestedBy: text("requested_by"), // the member the agent works for
+  askedMemberId: text("asked_member_id").notNull(),
+  amountUsd: text("amount_usd").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").notNull(), // pending | opened
+  sessionId: text("session_id"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+/** Connector tokens for Cosign's MCP endpoint (Grok Bot "Add a custom MCP": URL + Authorization header). One agent each; we keep only the hash. */
+export const mcpTokens = sqliteTable("mcp_tokens", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  agentId: text("agent_id").notNull(),
+  memberId: text("member_id").notNull(), // who issued it; calls outside a job act for this member
+  tokenHash: text("token_hash").notNull().unique(),
+  createdAt: text("created_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  revokedAt: text("revoked_at"),
+  lastUsedAt: text("last_used_at"),
+});
+
 export type WorkspaceRow = typeof workspaces.$inferSelect;
 export type RoleRow = typeof roles.$inferSelect;
 export type MemberRow = typeof members.$inferSelect;
@@ -257,3 +285,5 @@ export type ConnectionRow = typeof grokbotConnections.$inferSelect;
 export type TaskRow = typeof tasks.$inferSelect;
 export type ScheduleRow = typeof schedules.$inferSelect;
 export type TeamMessageRow = typeof teamMessages.$inferSelect;
+export type McpTokenRow = typeof mcpTokens.$inferSelect;
+export type FundingRequestRow = typeof fundingRequests.$inferSelect;

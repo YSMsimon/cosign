@@ -6,7 +6,7 @@
  * Server-only.
  */
 import type { Address } from "viem";
-import { availableAllowance, chain, fmt, proposePayment, topUpAgent, treasuryState, usdcBalance, wallet, wallets } from "../arc";
+import { availableAllowance, chain, findWallet, fmt, proposePayment, topUpAgent, treasuryState, usdcBalance, wallet, wallets } from "../arc";
 import { companyTreasuryAbi } from "../contracts/abis";
 import { editFile, listDir, readFile, sandboxExec, writeFile } from "../sandbox";
 import { NeedsApproval, paidFetch, PolicyRefusal } from "../x402/buyer";
@@ -313,9 +313,282 @@ export const TOOLS: ToolDef[] = [
       return { tx: res.hash };
     },
   },
+  // ── its own wallet, through Circle App Kit: send to a saved payee, swap USDC into an allowed token ──
+  {
+    name: "send_usdc",
+    kind: "money",
+    ability: "buy",
+    description:
+      "Send USDC from YOUR wallet to a saved payee's address on Arc (an onchain transfer through Circle App Kit). It counts as a purchase for every wallet limit, and above the ask-a-person line it waits for a member's OK. " +
+      "Use it for small direct payments from your own wallet; company payments from the treasury go through propose_payment.",
+    parameters: obj({ to: str("payee address (one of your allowed payees)"), amount_usd: str("amount in USDC, e.g. '0.50'"), memo: str("what this pays for") }, ["to", "amount_usd", "memo"]),
+    check: (c, a) => {
+      const r = rulesOf(c);
+      const stop = moneyRefusal(r);
+      if (stop) return stop;
+      if (!r.controls.allowedPayees.includes(String(a.to).trim().toLowerCase())) return `${a.to} is not one of this agent's allowed payees`;
+      return Number(a.amount_usd) > 0 ? null : "amount must be positive";
+    },
+    run: async (c, a) => {
+      const r = rulesOf(c);
+      const amount = String(a.amount_usd).trim();
+      const to = String(a.to).trim().toLowerCase() as Address;
+      const wait = guardPurchase(r, c.scope, Number(amount), "wallet-send", `send:${to}`);
+      if (wait) return wait;
+      const { kitSend, kitErrorText } = await import("../appkit");
+      try {
+        const res = await kitSend(wallet(c.agentRef).address, to, amount, "USDC");
+        recordSpend(c.scope, "purchase", Number(amount), `send:${res.txHash ?? to}`);
+        return { sent: true, amountUsd: amount, to, memo: String(a.memo), tx: res.txHash, explorer: res.explorerUrl };
+      } catch (e) {
+        throw new Error(`the transfer didn't go through: ${kitErrorText(e)}`);
+      }
+    },
+  },
+  {
+    name: "swap",
+    kind: "money",
+    ability: "buy",
+    description:
+      "Swap USDC in YOUR wallet into another token on Arc through Circle App Kit, e.g. EURC. Only tokens your rules allow; if the price would move more than your limit, nothing happens; the tokens come back to your wallet. " +
+      "The USDC counts as a purchase for every wallet limit. It always estimates first; set dry_run to only see the estimate.",
+    parameters: obj(
+      { token_out: str("token to receive, e.g. 'EURC'"), amount_usd: str("USDC to swap, e.g. '0.10'"), dry_run: { type: "boolean", description: "only estimate, don't swap" } },
+      ["token_out", "amount_usd"],
+    ),
+    check: (c, a) => {
+      const r = rulesOf(c);
+      const stop = moneyRefusal(r);
+      if (stop) return stop;
+      const allowed = r.controls.allowedSwapTokens ?? [];
+      if (!allowed.some((t) => t.toLowerCase() === String(a.token_out).trim().toLowerCase()))
+        return allowed.length ? `swapping to ${a.token_out} isn't allowed (allowed: ${allowed.join(", ")})` : "this agent isn't allowed to swap";
+      return Number(a.amount_usd) > 0 ? null : "amount must be positive";
+    },
+    run: async (c, a) => {
+      const r = rulesOf(c);
+      const amount = String(a.amount_usd).trim();
+      const tokenOut = (r.controls.allowedSwapTokens ?? []).find((t) => t.toLowerCase() === String(a.token_out).trim().toLowerCase())!;
+      const slippageBps = r.controls.maxSlippageBps ?? 300;
+      // limits and the speed limit first, so an over-limit swap never reaches App Kit (the ask-a-person line comes after the estimate)
+      const over = checkLimits(r, c.scope, "purchase", Number(amount));
+      if (over) return { refused: true, reason: over };
+      const from = wallet(c.agentRef).address;
+      const { kitEstimateSwap, kitSwap, kitErrorText } = await import("../appkit");
+      let est: Awaited<ReturnType<typeof kitEstimateSwap>>;
+      try {
+        est = await kitEstimateSwap({ from, tokenOut, amountIn: amount, slippageBps });
+      } catch (e) {
+        return { refused: true, reason: `no swap available for this amount: ${kitErrorText(e)}` };
+      }
+      if (est.toAddress && est.toAddress.toLowerCase() !== from.toLowerCase()) return { refused: true, reason: "the swap would send the tokens to another address" };
+      const quote = { amountInUsd: amount, tokenOut, estimatedOut: est.estimatedOut, minimumOut: est.minimumOut, maxPriceMovePct: slippageBps / 100 };
+      if (a.dry_run) return { estimate: true, ...quote };
+      const wait = guardPurchase(r, c.scope, Number(amount), "wallet-swap", `swap:USDC->${tokenOut}`);
+      if (wait) return wait;
+      try {
+        const res = await kitSwap({ from, tokenOut, amountIn: amount, slippageBps });
+        recordSpend(c.scope, "purchase", Number(amount), `swap:${res.txHash}`);
+        return { swapped: true, ...quote, tx: res.txHash, explorer: res.explorerUrl, fees: res.fees };
+      } catch (e) {
+        throw new Error(`the swap didn't go through: ${kitErrorText(e)}`);
+      }
+    },
+  },
+  {
+    name: "bridge",
+    kind: "money",
+    ability: "buy",
+    description:
+      "Bridge USDC from YOUR wallet on Arc to another chain over Circle CCTP (App Kit), to a saved payee or your own address. Only chains your rules allow. " +
+      "Circle's forwarder finishes it on the other chain (no gas needed there) for a fee; the amount plus fees count as a purchase. It estimates first.",
+    parameters: obj({ to: str("recipient: an allowed payee's address, or your own wallet address"), chain: str("destination chain, e.g. 'Base_Sepolia'"), amount_usd: str("USDC to send, e.g. '0.50'") }, ["to", "chain", "amount_usd"]),
+    check: (c, a) => {
+      const r = rulesOf(c);
+      const stop = moneyRefusal(r);
+      if (stop) return stop;
+      const chains = r.controls.allowedBridgeChains ?? [];
+      if (!chains.includes(String(a.chain).trim())) return chains.length ? `bridging to ${a.chain} isn't allowed (allowed: ${chains.join(", ")})` : "this agent isn't allowed to bridge";
+      const to = String(a.to).trim().toLowerCase();
+      const own = findWallet(c.agentRef)?.address.toLowerCase();
+      if (to !== own && !r.controls.allowedPayees.includes(to)) return `${a.to} is not one of this agent's allowed payees (or its own wallet)`;
+      return Number(a.amount_usd) > 0 ? null : "amount must be positive";
+    },
+    run: async (c, a) => {
+      const r = rulesOf(c);
+      const amount = String(a.amount_usd).trim();
+      const o = { from: wallet(c.agentRef).address, toChain: String(a.chain).trim(), recipient: String(a.to).trim().toLowerCase() as Address, amount };
+      const { kitEstimateBridge, kitBridge, kitErrorText } = await import("../appkit");
+      let est: { feeUsd: number; gasUsd: number };
+      try {
+        est = await kitEstimateBridge(o);
+      } catch (e) {
+        return { refused: true, reason: `no bridge route for this: ${kitErrorText(e)}` };
+      }
+      // the forwarder fee is taken out of the amount, so an amount at or under it can never arrive
+      if (est.feeUsd >= Number(amount)) {
+        return { refused: true, reason: `the bridge fee to ${o.toChain} is about $${est.feeUsd.toFixed(4)}, which is more than the $${amount} being sent; bridge more than that or don't bridge` };
+      }
+      const total = Math.round((Number(amount) + est.feeUsd + est.gasUsd) * 1e6) / 1e6;
+      const wait = guardPurchase(r, c.scope, total, "wallet-bridge", `bridge:${o.toChain}:${o.recipient}`);
+      if (wait) return wait;
+      try {
+        const res = await kitBridge(o);
+        recordSpend(c.scope, "purchase", total, `bridge:${res.steps.find((s) => s.tx)?.tx ?? o.toChain}`);
+        return { bridged: true, amountUsd: amount, chain: o.toChain, to: o.recipient, feesUsd: Math.round((est.feeUsd + est.gasUsd) * 1e6) / 1e6, state: res.state, steps: res.steps };
+      } catch (e) {
+        throw new Error(`the bridge didn't go through: ${kitErrorText(e)}`);
+      }
+    },
+  },
+  {
+    name: "gateway_deposit",
+    kind: "money",
+    ability: "buy",
+    description: "Move USDC from YOUR wallet into your own Circle Gateway balance on Arc (what nanopayments spend), through App Kit. Use it when your Gateway balance is too low for the paid APIs you need. It counts as a purchase.",
+    parameters: obj({ amount_usd: str("USDC to move, e.g. '0.50'") }, ["amount_usd"]),
+    check: (c, a) => moneyRefusal(rulesOf(c)) ?? (Number(a.amount_usd) > 0 ? null : "amount must be positive"),
+    run: async (c, a) => {
+      const r = rulesOf(c);
+      const amount = String(a.amount_usd).trim();
+      const wait = guardPurchase(r, c.scope, Number(amount), "wallet-gateway", "gateway:deposit");
+      if (wait) return wait;
+      const { kitGatewayDeposit, kitGatewayBalance, kitErrorText } = await import("../appkit");
+      const addr = wallet(c.agentRef).address;
+      try {
+        const res = await kitGatewayDeposit(addr, amount);
+        recordSpend(c.scope, "purchase", Number(amount), `gateway:${res.txHash}`);
+        return { deposited: true, amountUsd: amount, tx: res.txHash, explorer: res.explorerUrl, gatewayBalanceUsdc: await kitGatewayBalance(addr).catch(() => null) };
+      } catch (e) {
+        throw new Error(`the Gateway deposit didn't go through: ${kitErrorText(e)}`);
+      }
+    },
+  },
+  {
+    name: "earn",
+    kind: "money",
+    ability: "buy",
+    description:
+      "Earn yield on idle USDC in YOUR wallet through Circle App Kit: action 'vaults' lists your allowed vaults with their APY, 'position' shows what you hold, 'deposit' puts USDC in (counts as a purchase), 'withdraw' takes it back out.",
+    parameters: obj(
+      { action: str("'vaults', 'position', 'deposit' or 'withdraw'"), amount_usd: str("for deposit / withdraw, e.g. '0.50'; withdraw also takes 'all'"), vault: str("vault address (default: your first allowed vault)") },
+      ["action"],
+    ),
+    check: (c, a) => {
+      const r = rulesOf(c);
+      const act = String(a.action);
+      if (!["vaults", "position", "deposit", "withdraw"].includes(act)) return "action must be 'vaults', 'position', 'deposit' or 'withdraw'";
+      if (act === "deposit") {
+        const stop = moneyRefusal(r);
+        if (stop) return stop;
+      }
+      const vaults = r.controls.earnVaults ?? [];
+      if (!vaults.length) return "this agent has no Earn vaults allowed";
+      if (a.vault && !vaults.includes(String(a.vault).toLowerCase())) return `vault ${a.vault} isn't allowed`;
+      const all = act === "withdraw" && String(a.amount_usd).trim().toLowerCase() === "all";
+      if ((act === "deposit" || act === "withdraw") && !all && !(Number(a.amount_usd) > 0)) return "amount must be positive";
+      return null;
+    },
+    run: async (c, a) => {
+      const r = rulesOf(c);
+      const act = String(a.action);
+      const vault = String(a.vault ?? r.controls.earnVaults[0]).toLowerCase();
+      const addr = wallet(c.agentRef).address;
+      const k = await import("../appkit");
+      try {
+        if (act === "vaults") {
+          const all = await k.kitEarnVaults();
+          return { vaults: all.filter((v) => r.controls.earnVaults.includes(v.vault)) };
+        }
+        if (act === "position") return { vault, ...(await k.kitEarnPosition(addr, vault)) };
+        const amount = String(a.amount_usd).trim();
+        if (act === "deposit") {
+          const wait = guardPurchase(r, c.scope, Number(amount), "wallet-earn", `earn:${vault}`);
+          if (wait) return wait;
+          const res = await k.kitEarnDeposit(addr, vault, amount);
+          recordSpend(c.scope, "purchase", Number(amount), `earn:${res.txHash}`);
+          return { deposited: true, vault, amountUsd: amount, tx: res.txHash, explorer: res.explorerUrl };
+        }
+        // withdraw: App Kit only lets out what its position shows, and that view trails a deposit by a few minutes
+        const held = Number((await k.kitEarnPosition(addr, vault)).balance);
+        if (!(held > 0)) return { refused: true, reason: "App Kit shows no position in this vault yet; a new deposit takes a few minutes to appear, try again shortly" };
+        const want = amount.toLowerCase() === "all" ? held : Number(amount);
+        if (want > held + 0.001) return { refused: true, reason: `this wallet holds only $${held} in the vault` };
+        const out = String(Math.min(want, held));
+        const res = await k.kitEarnWithdraw(addr, vault, out);
+        return { withdrawn: true, vault, amountUsd: out, tx: res.txHash, explorer: res.explorerUrl };
+      } catch (e) {
+        throw new Error(`earn ${act} didn't go through: ${k.kitErrorText(e)}`);
+      }
+    },
+  },
+  {
+    name: "borrow",
+    kind: "money",
+    ability: "buy",
+    description:
+      "Look up borrowing through Circle App Kit (Morpho on Arc testnet): action 'markets' lists your allowed markets, 'quote' shows the collateral a loan would need, its APY, health factor and liquidation price. " +
+      "You can't take a loan: App Kit borrows only from smart-contract wallets, and yours isn't one. Say so if asked to borrow.",
+    parameters: obj(
+      { action: str("'markets' or 'quote'"), amount_usd: str("for quote: USDC to borrow"), market: str("market id (default: your first allowed market)") },
+      ["action"],
+    ),
+    check: (c, a) => {
+      const r = rulesOf(c);
+      const act = String(a.action);
+      if (act === "borrow" || act === "repay") return "taking or repaying a loan isn't possible: Circle App Kit borrows only from smart-contract wallets, and this agent's wallet is a plain one";
+      if (!["markets", "quote"].includes(act)) return "action must be 'markets' or 'quote'";
+      const markets = r.controls.borrowMarkets ?? [];
+      if (!markets.length) return "this agent isn't allowed to look up borrowing";
+      if (a.market && !markets.includes(String(a.market).toLowerCase())) return `market ${a.market} isn't allowed`;
+      if (act === "quote" && !(Number(a.amount_usd) > 0)) return "quote needs amount_usd";
+      return null;
+    },
+    run: async (c, a) => {
+      const r = rulesOf(c);
+      const act = String(a.action);
+      const market = String(a.market ?? r.controls.borrowMarkets[0]).toLowerCase();
+      const amount = String(a.amount_usd ?? "").trim();
+      const k = await import("../appkit");
+      try {
+        if (act === "markets") return { markets: (await k.kitBorrowMarkets()).filter((m) => r.controls.borrowMarkets.includes(m.market)) };
+        return { market, ...(await k.kitBorrowQuote(wallet(c.agentRef).address, market, amount)), canBorrow: false };
+      } catch (e) {
+        throw new Error(`borrow ${act} didn't go through: ${k.kitErrorText(e)}`);
+      }
+    },
+  },
+  {
+    name: "request_funds",
+    kind: "team",
+    description:
+      "Ask a person to add money to the company treasury when it is too short for what's needed (e.g. payments waiting). It @mentions an approver in the team feed with a funding request; they buy USDC into the treasury through Circle's onramp. " +
+      "You never buy crypto or see payment details yourself, and the money always goes to the treasury.",
+    parameters: obj({ amount_usd: str("how much the treasury needs, e.g. '5.40'"), reason: str("why: what is waiting and what is short") }, ["amount_usd", "reason"]),
+    run: async (c, a) => {
+      const s = teamScope(c);
+      const { requestFunds } = await import("../server/funding");
+      return requestFunds({ workspaceId: s.workspaceId, agentId: s.agentId, memberId: s.memberId, taskId: s.taskId ?? null, amountUsd: Number(a.amount_usd), reason: String(a.reason ?? "") });
+    },
+  },
 ];
 
 export const toolByName = new Map(TOOLS.map((t) => [t.name, t]));
+
+/**
+ * Limits, speed limit and the ask-a-person line for a wallet payment that isn't a paid API call (send, swap): the
+ * same checks as paid_fetch. Returns what to answer instead of paying, or null to go ahead.
+ */
+function guardPurchase(r: AgentRules, scope: RunScope | undefined, amountUsd: number, host: string, url: string) {
+  try {
+    beforePurchase(r, scope, { priceUsd: amountUsd, host, url });
+    return null;
+  } catch (e) {
+    if (e instanceof NeedsApproval) return { pending: true, approvalRequestId: e.requestId, reason: e.message };
+    if (e instanceof PolicyRefusal) return { refused: true, reason: e.message };
+    throw e;
+  }
+}
 
 /** Team tools need a saved agent in a workspace (old script profiles have no scope). */
 function teamScope(c: AgentContext): RunScope {
@@ -390,7 +663,15 @@ export async function runToolChecked(c: AgentContext, name: string, args: Record
   const refusal = tool.check?.(c, args) ?? null;
   if (refusal) return { status: "refused", output: { refused: true, reason: refusal }, reason: refusal };
   try {
-    return { status: "ok", output: await tool.run(c, args), kind: tool.kind };
+    const output = await tool.run(c, args);
+    // some rules can only be checked while the tool runs (paid_fetch's price, petty cash left, mention's guards);
+    // those answer { refused: true, reason }: count them as refusals everywhere (logs, Grok Bot, MCP), not as successes
+    const o = output as { refused?: unknown; reason?: unknown } | null;
+    if (o && typeof o === "object" && o.refused === true) {
+      const reason = String(o.reason ?? "refused");
+      return { status: "refused", output: { refused: true, reason }, reason };
+    }
+    return { status: "ok", output, kind: tool.kind };
   } catch (e) {
     const msg = (e as Error).message;
     return { status: "error", output: { error: msg }, error: msg };

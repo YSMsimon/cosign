@@ -121,6 +121,68 @@ token use and cost. Each person has their own thread (`GET /agents/:id/thread`);
 
 Events come from an in-process bus, so this needs one long-running server (not serverless functions).
 
+## Wallet: what an agent's own wallet can do (Circle App Kit)
+
+An agent's own Circle wallet can do more than pay per use. These tools, all under the `buy` ability (shown as
+"Spend from its own wallet"), go through Circle App Kit (`@circle-fin/app-kit` 1.20.0 with
+`@circle-fin/adapter-circle-wallets` 1.9.0, signed by the developer-controlled wallet with our API key and entity
+secret; `src/lib/appkit.ts`):
+
+| Tool | App Kit | What it does | Extra control |
+|---|---|---|---|
+| `send_usdc(to, amount_usd, memo)` | `kit.send` | USDC to an allowed payee | `allowedPayees` |
+| `swap(token_out, amount_usd, dry_run?)` | `kit.estimateSwap`, `kit.swap` | USDC into another token, back to the same wallet | `allowedSwapTokens`, `maxSlippageBps` (default 300 = 3%) |
+| `bridge(to, chain, amount_usd)` | `kit.estimateBridge`, `kit.bridge` (CCTP, forwarder) | USDC to another chain, to an allowed payee or its own address | `allowedBridgeChains` |
+| `gateway_deposit(amount_usd)` | `unifiedBalance.deposit` | tops up its Circle Gateway balance (what nanopayments draw from) | none beyond the limits |
+| `earn(action, amount_usd?, vault?)` | `earn.exploreVaults`, `deposit`, `getPosition`, `withdraw` | parks idle USDC in a Morpho vault and takes it back (`withdraw` takes `all`) | `earnVaults` |
+| `borrow(action, amount_usd?, market?)` | `borrow.exploreMarkets`, `getBorrowQuote` | market list and quotes only (see below) | `borrowMarkets` |
+
+Every outflow (send, swap, bridge amount plus fees, Gateway deposit, Earn deposit) counts as a purchase for every
+wallet limit (per payment, budgets, speed limit) and waits for a member's OK above the ask-a-person line
+(`beforePurchase`). Limits are checked before App Kit is asked for a price. An Earn withdrawal returns money to the
+same wallet and isn't counted. A bridge whose forwarder fee is at least the amount is refused before anything moves.
+Treasury payments still go through `propose_payment` and a person's cosign.
+
+What App Kit can't do from our wallets, found by testing on Arc testnet (2026-11-15):
+
+- **Borrow and repay**: App Kit borrows only from wallets that can settle an atomic batch (a Circle ERC-6900
+  smart-contract account, or an EIP-5792 wallet). Our agent wallets are developer-controlled EOAs, so `borrow`
+  stops at quotes and refuses a loan before asking anyone.
+- **Swap into cirBTC**: "No route available"; only USDC to EURC routes on Arc testnet.
+- **Off-ramp** and arbitrary contract calls aren't App Kit actions. Contract calls go through Circle's wallet API
+  (`callFrom` in `arc.ts`).
+
+Tested live on Arc testnet (2026-11-15) with Clerk's wallet:
+
+| Action | Result |
+|---|---|
+| send $0.01 to Lena | tx `0xa7f73ce1…` |
+| swap $0.05 USDC to EURC | 0.068022 EURC, tx `0xb1a7ac6c…` |
+| Gateway deposit $0.05 | tx `0x3e3007a0…` |
+| Earn deposit $0.05 | tx `0x491ce9fe…` |
+| Earn withdraw all ($0.049999) | tx `0x1c138eb2…` |
+| bridge $0.20 to Base Sepolia, its own address | approve, burn, attestation, mint `0x98198d16…` on Base Sepolia; fees $0.0835 |
+| bridge $0.05 | refused: fee $0.0553 |
+| borrow quote $1 | 0.00001917 cirBTC collateral, health factor 1.24 |
+| borrow $0.01 | refused by App Kit (EOA) |
+
+App Kit's Earn position trails a deposit by a few minutes, so `earn withdraw` reads the position first and says so
+when it is still empty.
+
+## Adding funds: the onramp, started by the agent
+
+An agent never buys crypto and never sees payment details. When the treasury is too short for what is waiting, it
+calls `request_funds(amount_usd, reason)`: Cosign stores a funding request and @mentions an approver (else a workspace
+manager) in the team feed with the amount and the reason. That person opens Circle's onramp from the request
+(`POST /workspaces/:ws/onramp { requestId }`). The server creates the session with `createAppServerKit().onramp`
+(sandbox `api-test.circle.com` / `onramp-sandbox.arc.io` when the key is a `TEST_API_KEY`), always for the
+workspace treasury on Arc testnet, never an address the agent chose, and returns the widget URL. The person
+pays in Circle's widget, and the USDC lands in the treasury. There is no separate "add funds" button: the request in
+chat is the entry point. Off-ramp to a bank isn't part of App Kit.
+
+Tested 2026-11-15: `request_funds` for $5.40 asked the Founder and moved nothing. A sandbox session was created
+for the treasury `0xb496…e62c`, and its widget opened in Chrome.
+
 ## Team: agents hand work to each other
 
 Every agent, ours or Grok Bot (through its tool API), has two tools:
@@ -169,6 +231,32 @@ goes through the same checks as the chat, under the rights of the member who ask
 money and memory tools, not the microVM tools (it has its own computer). With no Bot connected, tasks
 run on our own loop. The header that carries the webhook key still needs confirming with a live ping from the desktop app.
 We send `Authorization: Bearer` and `X-Webhook-Key`; `GROKBOT_WEBHOOK_HEADER=<name>` sends only that one.
+
+Every job body also carries `setup`: the routine's standing rules (`routineGuide` in grokbot.ts, the same text the
+setup message installs as the routine's prompt). A routine whose saved prompt is missing or older follows the current
+rules anyway, so the member only pastes the setup message once. Every tool call a job makes (tool API or MCP) is kept
+on the task as a progress step with `kind: "tool"` (`name · ok | refused: … | error: …`).
+
+### MCP connector
+
+Grok Bot can also reach the same tools as an MCP server: in the Grok Bot app, **Add a custom MCP** with the URL
+`<public base>/api/v1/mcp` and an `Authorization` header holding a connector token (`pnpm grokbot mcp` issues one,
+prints the URL and copies `Bearer …` to the clipboard; `POST /agents/:id/mcp-token` does the same over the API).
+Streamable HTTP with plain JSON answers and no sessions; `initialize`, `ping`, `tools/list`, `tools/call`. One token
+per agent (a new one revokes the old), 30 days, revocable (`DELETE /agents/:id/mcp-token`). Calls inside an open
+job act for the person who asked for it and join its chain (Grok Bot passes `task_id`; otherwise the agent's newest
+open job); outside a job they act for the member who issued the token. Same tool set and checks as the webhook API.
+`pnpm grokbot mcp-check` proves the endpoint over the public URL with a throwaway token.
+
+### Live eval
+
+`pnpm grokbot:eval [agent] [case …]` sends real jobs to the agent's Grok Bot one at a time and checks what it
+actually did (recorded tool calls, mentions, money, the result): reading proposals and balances, the team, asking a
+person, handing work to another agent and getting its answer back, a refused payment, staying quiet when all is
+fine, the self-mention guard, one paid API call, a funding request (on Grok Bot and on our own loop), a Gateway top-up, an
+Earn deposit, and a refused loan. Jobs on our own loop record their tool calls on the task the same way.
+On 2026-11-15 the five new cases passed 24/24 checks (Gateway and Earn first ran into Clerk's $0.50 daily budget, which
+the earlier live tests had used up: refused correctly, then passed on a rerun with the budget raised for that run). It writes a Markdown report to `~/Desktop/research/cosign/`.
 
 ## Voice (ElevenLabs)
 
@@ -245,13 +333,16 @@ pnpm voice status
 `.env.local` needs `COSIGN_SECRET` and `CRON_SECRET` besides the Circle, xAI and QuickNode keys
 (`PUBLIC_BASE_URL` when Grok Bot must reach a tunnel or deploy; `ELEVENLABS_API_KEY` for voice).
 
-Only one process should hold `data/cosign.db` for long. If its write-ahead log is ever deleted or
-replaced under a running process, that process stops itself at once (without closing the database,
-so the stale log is never copied back). Back up `data/` and restart.
+The database is `~/.cosign/cosign.db` (`COSIGN_DB` overrides it), outside the project folder on purpose: the dev
+server's file watcher (Turbopack, in the same process) reads changed files in the project, and on macOS any open and
+close of the file by other code in a process drops that process's SQLite locks. The server would then hold the
+database without its locks, and the next script to exit (`pnpm grokbot`, `pnpm voice`, the evals) would delete the
+write-ahead log under it. Outside the watched folder, scripts can run while the server runs. The split guard stays:
+if the log is ever deleted or replaced under the server, it stops at once without writing the stale log back.
 
 ## Tests
 
-- `pnpm test:unit`: 53 tests, no network: team mentions and their guards, roles, agent access, rules and loosening, all seven controls
+- `pnpm test:unit`: 69 tests, no network: the wallet send, swap, bridge, Gateway, Earn and borrow checks, `request_funds`, the MCP endpoint, team mentions and their guards, roles, agent access, rules and loosening, all seven controls
   against a throwaway database, wallet sign-in, the checked tool runner, schedule times, secret encryption,
   the `proposal.drafted` event, `list_allowed`, voice (silence via `skip_turn`, the ElevenLabs agent config, the streamed turn format, "One moment",
   retries never running a turn twice, spoken errors, speech cleanup, post-call signatures and webhook).
@@ -287,8 +378,14 @@ GET    /api/v1/workspaces/:ws/proposals/:pid/cancel
 POST   /api/v1/workspaces/:ws/approver-changes     { kind: add | remove | threshold, address, newThreshold }
 GET    /api/v1/workspaces/:ws/approvals            ask-a-person purchase requests
 POST   /api/v1/workspaces/:ws/approvals/:rid       { decision: approve | deny }
+GET    /api/v1/workspaces/:ws/funding-requests     what agents asked to add to the treasury
+POST   /api/v1/workspaces/:ws/onramp               { requestId?, amountUsd? } → Circle onramp widget URL for the treasury
 GET    /api/v1/workspaces/:ws/activity
 GET    /api/v1/workspaces/:ws/activity/stream      SSE
+POST   /api/v1/mcp                                    MCP (Grok Bot custom connector; connector token)
+GET    /api/v1/agents/:ag/mcp-token                   connector token status
+POST   /api/v1/agents/:ag/mcp-token                   issue a connector token (shown once)
+DELETE /api/v1/agents/:ag/mcp-token                   revoke it
 GET    /api/v1/workspaces/:ws/team                    people + agents you may use
 GET    /api/v1/workspaces/:ws/team/messages           the team feed (@mentions and answers)
 GET    /api/v1/workspaces/:ws/tasks
