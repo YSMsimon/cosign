@@ -107,7 +107,9 @@ the API returns `{ chainId, to, data, value, description }`; the frontend sends 
 
 `POST /agents/:id/chat {message}` streams Server-Sent Events: `step` for every loop event (Grok
 thinking, web/X searches, tool calls with arguments, results, refusals), then `done` with the answer,
-token use and cost. Each person has their own thread (`GET /agents/:id/thread`); memory is shared.
+token use and cost. Each person has their own thread (`GET /agents/:id/thread`); memory is shared. The thread
+returns each tool call with its arguments and its (parsed, 1,500-character) result, so the app can redraw a turn's
+cards after a reload. The frontend that reads all this is described in [frontend.md](frontend.md).
 
 ## Live feed
 
@@ -120,6 +122,14 @@ token use and cost. Each person has their own thread (`GET /agents/:id/thread`);
 - `team.message`: an agent @mentioned a teammate or a person, or a mentioned agent answered (a `team_messages` row).
 
 Events come from an in-process bus, so this needs one long-running server (not serverless functions).
+
+`GET /workspaces/:ws/activity` first reads anything new from Arc for that treasury (its own events, and USDC moving
+in or out of it through Arc's system emitter), decodes it with the stream's decoder and stores it (deduped on tx
+hash + log index, so it agrees with the QuickNode stream's rows), at most every 10 seconds per treasury. The first
+read starts near the block the workspace was made in. So the activity is complete even while the stream is paused.
+
+Arc's public RPC rate-limits bursts (429): the server's client retries with backoff, and executed or cancelled
+proposals are read once and kept (they never change).
 
 ## Wallet: what an agent's own wallet can do (Circle App Kit)
 
@@ -346,6 +356,8 @@ if the log is ever deleted or replaced under the server, it stops at once withou
   against a throwaway database, wallet sign-in, the checked tool runner, schedule times, secret encryption,
   the `proposal.drafted` event, `list_allowed`, voice (silence via `skip_turn`, the ElevenLabs agent config, the streamed turn format, "One moment",
   retries never running a turn twice, spoken errors, speech cleanup, post-call signatures and webhook).
+- `pnpm test:browser`: 7 Playwright specs, one per wired part, in the system's Chrome with an injected throwaway
+  wallet (see [frontend.md](frontend.md#browser-tests)).
 - `pnpm test:e2e`: 23 tests against the running app on Arc testnet with real throwaway wallets: sign-in,
   creating a company onchain, invites, roles, contacts, agents, controls, onchain setup, chat over SSE
   (Grok), cosigning, adding an approver, Grok Bot connect / tasks / tokens (a mock routine), schedules,
@@ -379,6 +391,7 @@ POST   /api/v1/workspaces/:ws/approver-changes     { kind: add | remove | thresh
 GET    /api/v1/workspaces/:ws/approvals            ask-a-person purchase requests
 POST   /api/v1/workspaces/:ws/approvals/:rid       { decision: approve | deny }
 GET    /api/v1/workspaces/:ws/funding-requests     what agents asked to add to the treasury
+POST   /api/v1/workspaces/:ws/funding-requests/:rid/decline   an approver says no (nothing is bought)
 POST   /api/v1/workspaces/:ws/onramp               { requestId?, amountUsd? } → Circle onramp widget URL for the treasury
 GET    /api/v1/workspaces/:ws/activity
 GET    /api/v1/workspaces/:ws/activity/stream      SSE
@@ -390,8 +403,10 @@ GET    /api/v1/workspaces/:ws/team                    people + agents you may us
 GET    /api/v1/workspaces/:ws/team/messages           the team feed (@mentions and answers)
 GET    /api/v1/workspaces/:ws/tasks
 GET    /api/v1/workspaces/:ws/agents
-POST   /api/v1/workspaces/:ws/agents               { name, prompt, visibility, preset, allowedRoleIds, controls }
+GET    /api/v1/workspaces/:ws/spend                ?days=30: per day and per agent (the rows the limits read), last 7 days by kind
+POST   /api/v1/workspaces/:ws/agents               { name, prompt, visibility, preset, allowedRoleIds, controls, hue }
 GET    /api/v1/agents/:ag                          settings, balances, onchain status
+GET    /api/v1/agents/:ag/spend                    ?days=30: per day, the last 24 h by kind, payments this hour
 PATCH  /api/v1/agents/:ag                          { name, prompt, visibility, allowedRoleIds, abilities, controls }
 POST   /api/v1/agents/:ag/freeze
 POST   /api/v1/agents/:ag/unfreeze
