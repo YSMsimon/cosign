@@ -9,6 +9,8 @@ import { after } from "next/server";
 import { z } from "zod";
 import { clearCookie, createNonce, endSession, sessionCookie, verifySignIn } from "../auth";
 import { activityBus } from "../activity/store";
+import { syncTreasuryActivity } from "../activity/backfill";
+import type { Address } from "viem";
 import type { ProposalDrafted } from "../agent/controls";
 import type { ActivityRow } from "../db/schema";
 import { requireAddress, requireAgentMember, requireMember, type Membership } from "./access";
@@ -130,8 +132,10 @@ route("POST", "/workspaces/:ws/approvals/:rid", async (req, p) => {
 });
 
 // activity (QuickNode Stream → our DB), live feed
-route("GET", "/workspaces/:ws/activity", (req, p) => {
+route("GET", "/workspaces/:ws/activity", async (req, p) => {
   const m = requireMember(req, p.ws, "treasury.view");
+  // read anything new from Arc first (the QuickNode stream writes the same rows when it runs)
+  await syncTreasuryActivity(m.workspace.treasury as Address, m.workspace.createdAt).catch((e) => console.warn("[activity] chain read failed:", (e as Error).message));
   return { activity: workspaceActivity(m, Number(new URL(req.url).searchParams.get("limit") ?? 50)).map((r) => ({ ...r, raw: undefined })) };
 });
 route("GET", "/workspaces/:ws/activity/stream", (req, p) => activityStream(req, requireMember(req, p.ws, "treasury.view")));
