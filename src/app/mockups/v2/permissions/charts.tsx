@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Label, Pie, PieChart, PolarAngleAxis, RadialBar, RadialBarChart, ReferenceLine, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, Label, Pie, PieChart, ReferenceLine, XAxis, YAxis } from "recharts";
 import { ChartReferenceLabel } from "@/components/chart-reference-label";
 import { RankList, RankListItem } from "@/components/rank-list";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -96,86 +96,6 @@ export function SpendingChart() {
   );
 }
 
-const todayConfig = {
-  used: { label: "Used today" },
-  purchases: { label: "API purchases", color: "var(--chart-1)" },
-  drafts: { label: "Treasury drafts", color: "var(--chart-2)" },
-} satisfies ChartConfig;
-
-/** Today against the daily budgets: shadcn "Radial Chart" with one ring per budget. */
-export function BudgetRadial() {
-  const c = clerk.controls;
-  const u = clerk.usage;
-  const data = [
-    { key: "drafts", used: Math.round((u.draftsToday / (c.drafts.daily ?? 1)) * 100), fill: "var(--color-drafts)" },
-    { key: "purchases", used: Math.round((u.purchasesToday / (c.purchases.daily ?? 1)) * 100), fill: "var(--color-purchases)" },
-  ];
-  const top = Math.max(...data.map((d) => d.used));
-  return (
-    <Card className="gap-2">
-      <CardHeader>
-        <CardTitle>Today&apos;s budgets</CardTitle>
-        <CardDescription>
-          {usd(u.purchasesToday)} of {usd(c.purchases.daily ?? 0)} on APIs · {usd(u.draftsToday)} of {usd(c.drafts.daily ?? 0)} in drafts
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <ChartContainer config={todayConfig} className="mx-auto aspect-square max-h-[200px]">
-          <RadialBarChart data={data} innerRadius={58} outerRadius={92} barSize={12} startAngle={90} endAngle={-270}>
-            <PolarAngleAxis type="number" domain={[0, 100]} tick={false} />
-            <RadialBar dataKey="used" background cornerRadius={8} />
-            <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel nameKey="key" formatter={(v, _n, item) => `${todayConfig[item.payload.key as "drafts" | "purchases"].label}: ${v}%`} />} />
-            <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle">
-              <tspan x="50%" dy="-0.2em" className="fill-foreground text-2xl font-bold">
-                {top}%
-              </tspan>
-              <tspan x="50%" dy="1.5em" className="fill-muted-foreground text-xs">
-                at most
-              </tspan>
-            </text>
-          </RadialBarChart>
-        </ChartContainer>
-        <div className="mt-2 flex justify-center gap-4 text-xs text-muted-foreground">
-          {data.map((d) => (
-            <span key={d.key} className="flex items-center gap-1.5">
-              <span className="size-2 rounded-[2px]" style={{ background: `var(--chart-${d.key === "purchases" ? 1 : 2})` }} />
-              {todayConfig[d.key as "drafts" | "purchases"].label} {d.used}%
-            </span>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-const HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17].map((h, i) => ({ hour: `${h}:00`, payments: [2, 4, 1, 6, 12, 3, 5, 2, 0, 1][i] }));
-const hourConfig = { payments: { label: "Payments", color: "var(--chart-1)" } } satisfies ChartConfig;
-
-/** Payments per hour today against the speed limit: shadcn "Bar Chart" with a reference line. */
-export function HourlyBars() {
-  const limit = clerk.controls.maxPaymentsPerHour;
-  return (
-    <Card className="gap-2">
-      <CardHeader>
-        <CardTitle>Payments per hour</CardTitle>
-        <CardDescription>Today. Above the line, Clerk is refused.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <ChartContainer config={hourConfig} className="aspect-auto h-[200px] w-full">
-          <BarChart data={HOURS} margin={{ top: 16, right: 8 }}>
-            <CartesianGrid vertical={false} />
-            <XAxis dataKey="hour" tickLine={false} axisLine={false} tickMargin={8} interval={1} />
-            <YAxis tickLine={false} axisLine={false} width={28} domain={[0, limit]} />
-            <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
-            <ReferenceLine y={limit} stroke="var(--destructive)" strokeDasharray="4 4" label={<ChartReferenceLabel variant="pill" label="Speed limit" value={`${limit}/h`} />} />
-            <Bar dataKey="payments" fill="var(--color-payments)" radius={6} />
-          </BarChart>
-        </ChartContainer>
-      </CardContent>
-    </Card>
-  );
-}
-
 /** Where Clerk's money went this month: shadcn "Pie Chart - Donut with Text". */
 export function SplitDonut() {
   const totals = (Object.keys(spendConfig) as Series[]).map((k) => ({ key: k, amount: Math.round(DAYS.reduce((s, d) => s + d[k], 0) * 100) / 100, fill: `var(--color-${k})` }));
@@ -224,8 +144,8 @@ export function AgentRank() {
       total: sum("drafts") + sum("purchases") + sum("pettyCash"),
       sub: `Drafts ${usd(sum("drafts"))} · APIs ${usd(sum("purchases"))} · petty cash ${usd(sum("pettyCash"))}`,
     },
-    { name: "Auditor", hue: "violet" as const, total: 0.36, sub: "APIs $0.36" },
-    { name: "Scribe", hue: "teal" as const, total: 0.12, sub: "APIs $0.12" },
+    { name: "Auditor", hue: "violet" as const, total: 0, sub: "No money abilities" },
+    { name: "Scribe", hue: "teal" as const, total: 0, sub: "No money abilities" },
   ];
   const max = rows[0].total;
   return (

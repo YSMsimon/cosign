@@ -33,8 +33,8 @@ export const sourceTag: Record<Source, "secondary" | "info" | "outline" | "succe
 };
 
 export const sessions: { title: string; agent: AgentId; via: Source; last: string; when: string }[] = [
-  { title: "Invoice 120 from Lena", agent: "clerk", via: "Chat", last: "Drafted $2.40 to Lena. It needs one cosign.", when: "2 min ago" },
-  { title: "What's waiting for a cosign?", agent: "clerk", via: "Voice", last: "Two payments to Lena are waiting.", when: "18 min ago" },
+  { title: "Invoice 120 from Lena", agent: "clerk", via: "Chat", last: "Drafted $2.40 to Lena. It needs one approval.", when: "2 min ago" },
+  { title: "What's waiting for approval?", agent: "clerk", via: "Voice", last: "Two payments to Lena are waiting.", when: "18 min ago" },
   { title: "Invoice 121 (webhook)", agent: "clerk", via: "Grok Bot", last: "Couldn't find invoice 121, so nothing was drafted.", when: "1 h ago" },
   { title: "Review proposal #5", agent: "auditor", via: "Chat", last: "Matches invoice 120 and the saved payee.", when: "1 h ago" },
   { title: "Weekly vendor check", agent: "clerk", via: "Schedule", last: "Lena: risk low. Paid $0.02.", when: "Mon 9:00" },

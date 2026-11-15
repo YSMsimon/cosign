@@ -40,9 +40,9 @@ type Phase = "connecting" | "listening" | "thinking" | "talking";
 const callScript = (name: string): { phase: Phase; ms: number; say?: Line; status?: string }[] => [
   { phase: "connecting", ms: 1400 },
   { phase: "talking", ms: 2600, say: { who: "agent", text: `Hi, it's ${name}. What do you need?`, via: "voice" } },
-  { phase: "listening", ms: 3000, say: { who: "you", text: "What's waiting for a cosign?", via: "voice" } },
-  { phase: "thinking", ms: 1800, status: "Looking at what's waiting for a cosign..." },
-  { phase: "talking", ms: 3400, say: { who: "agent", text: "Proposals five and nine to Lena are waiting for your cosign.", via: "voice" } },
+  { phase: "listening", ms: 3000, say: { who: "you", text: "What's waiting for approval?", via: "voice" } },
+  { phase: "thinking", ms: 1800, status: "Looking at what's waiting for approval..." },
+  { phase: "talking", ms: 3400, say: { who: "agent", text: "Proposals five and nine to Lena are waiting for your approval.", via: "voice" } },
   { phase: "listening", ms: 0 },
 ];
 

@@ -39,7 +39,7 @@ function CopyOpen({ address, label }: { address: string; label: string }) {
  * Every address in one table (Simon picked it for the Permissions page, 2026-11-14): the workspace's treasury
  * contract, then each agent's own wallet, its balance and what it may do on the treasury.
  */
-export function WalletsTable() {
+export function WalletsTable({ treasuryUsdc = TREASURY.usdc }: { treasuryUsdc?: number }) {
   const { agents } = useAgents();
   return (
     <TableCard>
@@ -63,7 +63,7 @@ export function WalletsTable() {
               </TableCell>
               <TableCell className="font-mono text-xs">{short(TREASURY.address)}</TableCell>
               <TableCell>
-                <Usdc amount={TREASURY.usdc} />
+                <Usdc amount={treasuryUsdc} />
               </TableCell>
               <TableCell>
                 <Tag size="sm">
