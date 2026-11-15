@@ -116,14 +116,15 @@ export function CosignProvider({ children }: { children: React.ReactNode }) {
     [me.data, ws.data, wsId],
   );
 
-  if (signedOut || me.loading || (wsId && ws.loading)) {
+  if (signedOut || (me.loading && !me.data) || (wsId && ws.loading && !ws.data)) {
     return (
       <FullScreen>
         <Spinner size="sm" label="Opening Cosign" className="text-muted-foreground" />
       </FullScreen>
     );
   }
-  const err = me.error ?? ws.error;
+  // a failed refresh keeps what's on screen; only a first load that fails shows the error
+  const err = (!me.data && me.error) || (!ws.data && ws.error);
   if (err) {
     return (
       <FullScreen>

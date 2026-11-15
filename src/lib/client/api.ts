@@ -48,7 +48,10 @@ export class ApiError extends Error {
   }
 }
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+/** A read that failed only because Arc's public RPC was busy (it rate-limits bursts): worth asking again shortly. */
+const busy = (status: number, text: string) => status === 429 || (status >= 500 && /429|rate limit|exceeds defined limit/i.test(text));
+
+async function call<T>(method: string, path: string, body?: unknown, attempt = 0): Promise<T> {
   const r = await fetch(`/api/v1${path}`, {
     method,
     headers: body !== undefined ? { "content-type": "application/json" } : undefined,
@@ -57,6 +60,10 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     cache: "no-store",
   });
   const text = await r.text();
+  if (method === "GET" && attempt < 3 && busy(r.status, text)) {
+    await new Promise((res) => setTimeout(res, 800 * 2 ** attempt));
+    return call<T>(method, path, body, attempt + 1);
+  }
   let json: unknown = null;
   try {
     json = text ? JSON.parse(text) : null;

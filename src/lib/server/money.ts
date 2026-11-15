@@ -18,8 +18,16 @@ import { badRequest, conflict, forbidden, notFound, prepare } from "./http";
 const KINDS = ["payment", "add_approver", "remove_approver", "set_threshold"] as const;
 type ChainProposal = { kind: number; to: string; amount: bigint; newThreshold: number; proposer: string; createdAt: bigint; approvals: number; executed: boolean; cancelled: boolean; memo: string };
 
+/** Executed and cancelled proposals never change again: read each once (the ledger otherwise re-reads every one). */
+const g = globalThis as unknown as { __cosignFinalProposals?: Map<string, ChainProposal> };
+const finals = (g.__cosignFinalProposals ??= new Map());
 async function readProposal(treasury: Address, pid: bigint) {
-  return (await chain.readContract({ address: treasury, abi: companyTreasuryAbi, functionName: "getProposal", args: [pid] })) as ChainProposal;
+  const key = `${treasury.toLowerCase()}:${pid}`;
+  const hit = finals.get(key);
+  if (hit) return hit;
+  const p = (await chain.readContract({ address: treasury, abi: companyTreasuryAbi, functionName: "getProposal", args: [pid] })) as ChainProposal;
+  if (p.executed || p.cancelled) finals.set(key, p);
+  return p;
 }
 
 export async function listProposals(m: Membership, o: { status?: "open" | "all" } = {}) {
@@ -39,7 +47,7 @@ export async function listProposals(m: Membership, o: { status?: "open" | "all" 
     if (o.status === "open" && !open) continue;
     const meta = metas.get(String(i));
     const agent = agents.get(p.proposer.toLowerCase());
-    const iApproved = meIsApprover ? ((await chain.readContract({ address: t, abi: companyTreasuryAbi, functionName: "approvedBy", args: [BigInt(i), m.address as Address] })) as boolean) : false;
+    const iApproved = meIsApprover && open ? ((await chain.readContract({ address: t, abi: companyTreasuryAbi, functionName: "approvedBy", args: [BigInt(i), m.address as Address] })) as boolean) : false;
     out.push({
       id: i,
       kind: KINDS[p.kind] ?? "unknown",

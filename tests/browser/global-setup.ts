@@ -34,6 +34,8 @@ export default async function globalSetup() {
       if (r.status === 200 && a.status === 200 && a.json.agent.status === "active") {
         console.log(`[browser] reusing workspace ${s.ws} (made ${s.createdAt}); FRESH=1 makes a new one`);
         await topUp(a.json.agent.wallet, Number(a.json.agent.balances.walletUsdc));
+        // back-to-back runs make many payments: a test agent may make 60 an hour (the default is 10)
+        if ((a.json.agent.controls.maxPaymentsPerHour ?? 0) < 60) await api(owner, "PATCH", `/agents/${s.agent}`, { controls: { maxPaymentsPerHour: 60 } });
         await voice(s.agent);
         return;
       }
@@ -63,7 +65,7 @@ export default async function globalSetup() {
     visibility: "team",
     preset: "clerk",
     hue: "blue",
-    controls: { allowedPayees: [lena], drafts: { perPayment: 1, daily: 5, weekly: 10, monthly: 20 }, askAboveUsd: 0.01 },
+    controls: { allowedPayees: [lena], drafts: { perPayment: 1, daily: 5, weekly: 10, monthly: 20 }, askAboveUsd: 0.01, maxPaymentsPerHour: 60 },
   });
   if (agent.status !== 201) throw new Error(`agent: ${agent.status} ${JSON.stringify(agent.json)}`);
   const agentId = agent.json.agent.id as string;

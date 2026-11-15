@@ -44,6 +44,8 @@ test("agent chat: a real turn streams its steps, a refused payment shows its car
   await page.getByRole("option", { name: /Grok Bot/ }).click();
   const job = `check the treasury balance in the background ${Date.now()}`;
   await box.pressSequentially(job);
+  // the box takes typing while the last turn finishes, but sends only once the agent is free
+  await expect(page.getByRole("button", { name: "Send" })).toHaveAttribute("aria-disabled", "false", { timeout: 120_000 });
   await box.press("Enter");
   const task = await expect
     .poll(async () => {

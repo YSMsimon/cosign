@@ -20,6 +20,6 @@ const paths: Record<string, string> = {
 };
 const r = await api(owner, "GET", paths[what]);
 const out = what === "thread" ? { ...r.json, messages: r.json.messages.slice(-Number(process.argv[3] ?? 8)) } : r.json;
-console.log(JSON.stringify(out, null, 1).slice(0, 6000));
+console.log(JSON.stringify(out, null, 1).slice(0, what === "thread" ? 6000 : 200000));
 process.exit(0);
 })();

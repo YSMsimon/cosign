@@ -40,7 +40,8 @@ export const explorerTx = (h: string) => `${arcTestnet.blockExplorers.default.ur
 export const explorerAddr = (a: string) => `${arcTestnet.blockExplorers.default.url}/address/${a}`;
 
 // Arc confirms in well under a second; viem's default 4 s polling made every transaction wait up to 4 s extra.
-export const chain = createPublicClient({ chain: arcTestnet, transport: http(), pollingInterval: 500 });
+// the public RPC rate-limits bursts (429): retry with backoff (0.3, 0.6, 1.2, 2.4 s) before giving up
+export const chain = createPublicClient({ chain: arcTestnet, transport: http(undefined, { retryCount: 4, retryDelay: 300 }), pollingInterval: 500 });
 
 let _circle: ReturnType<typeof initiateDeveloperControlledWalletsClient> | undefined;
 export const circle = () =>

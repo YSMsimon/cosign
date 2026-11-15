@@ -8,11 +8,11 @@ export const instant = false;
 /** Rooms and agents. ?agent=<id> picks the agent (read with useSearchParams, which needs a Suspense boundary). */
 export default function ChatPage() {
   return (
-    <Suspense>
-      {/* ElevenLabs' voice session lives here, so a call keeps going while the page re-renders */}
-      <VoiceProvider>
+    /* ElevenLabs' voice session lives above the Suspense boundary, so nothing that suspends inside can end a call */
+    <VoiceProvider>
+      <Suspense>
         <ChatView />
-      </VoiceProvider>
-    </Suspense>
+      </Suspense>
+    </VoiceProvider>
   );
 }
