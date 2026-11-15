@@ -11,6 +11,13 @@ test("debug page", async ({ page }) => {
   await signInThroughUi(page, personFromKey("owner", s.ownerKey).account);
   await page.goto(process.env.DEBUG_PAGE!.replace("{agent}", s.agent).replace("{ws}", s.ws));
   await page.waitForTimeout(Number(process.env.DEBUG_WAIT ?? 6000));
+  if (process.env.DEBUG_TYPE) {
+    const box = page.getByPlaceholder(/^Message /);
+    await box.pressSequentially(process.env.DEBUG_TYPE);
+    await page.waitForTimeout(1500);
+    console.log("OPTIONS", await page.getByRole("option").allInnerTexts());
+    console.log("BOX", await box.inputValue());
+  }
   console.log("URL", page.url());
   console.log("ERRORS\n" + errors.join("\n"));
   console.log("TEXT\n" + (await page.locator("body").innerText()).slice(0, 3000));

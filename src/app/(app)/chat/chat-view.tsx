@@ -5,7 +5,7 @@
  * the agents you can talk to; the middle is your conversation with the agent you picked, live as it works; the right
  * is its wallet and its place on the treasury. Same components and words as /mockups/v2/session.
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Bot, Hash, Info, Mic, MicOff, PaperclipIcon, PhoneOff, Plus, RefreshCw, Search, UserPlus } from "lucide-react";
 import { loader, Matrix } from "@/components/ui/matrix";
@@ -73,20 +73,30 @@ export function ChatView() {
   const roles = useData(can("members.manage") ? `roles:${wsId}` : null, () => api.roles(wsId));
 
   // who @ can name in a message: the other agents, Grok Bot (runs this agent's job in the background), then people
-  const members: Member[] = [
-    ...(teamData.data?.agents ?? [])
-      .filter((a) => a.id !== agent?.id)
-      .map((a): Member => {
-        const v = agentsData.views.find((x) => x.id === a.id);
-        return { id: a.id, name: a.name, kind: "agent", sub: a.job, address: v?.wallet ?? "", hue: hueOf({ id: a.id, hue: v?.hue }) };
-      }),
-    GROK_BOT,
-    ...(teamData.data?.people ?? [])
-      .filter((p) => p.address !== address)
-      .map((p): Member => ({ id: p.id, name: p.name, kind: "person", sub: p.role, address: p.address, initials: initialsOf(p.name, p.address) })),
-  ];
+  const agentId = agent?.id;
+  const views = agentsData.views;
+  const members: Member[] = useMemo(
+    () => [
+      ...(teamData.data?.agents ?? [])
+        .filter((a) => a.id !== agentId)
+        .map((a): Member => {
+          const v = views.find((x) => x.id === a.id);
+          return { id: a.id, name: a.name, kind: "agent", sub: a.job, address: v?.wallet ?? "", hue: hueOf({ id: a.id, hue: v?.hue }) };
+        }),
+      GROK_BOT,
+      ...(teamData.data?.people ?? [])
+        .filter((p) => p.address !== address)
+        .map((p): Member => ({ id: p.id, name: p.name, kind: "person", sub: p.role, address: p.address, initials: initialsOf(p.name, p.address) })),
+    ],
+    [teamData.data, views, agentId, address],
+  );
 
-  const extras = useChatExtras(agent, view, members);
+  // to draw @mentions in what was said, everyone counts, you included (you just can't @ yourself)
+  const everyone: Member[] = useMemo(() => {
+    const me = teamData.data?.people.find((p) => p.address === address);
+    return me ? [...members, { id: me.id, name: me.name, kind: "person", sub: me.role, address: me.address, initials: initialsOf(me.name, me.address) }] : members;
+  }, [members, teamData.data, address]);
+  const extras = useChatExtras(agent, view, everyone);
   const cards = useToolCards(agent);
   const voice = useVoiceCall(agent);
   // a payment drafted by voice opens its cosign card in this call (the server says which session it came from)
@@ -388,7 +398,7 @@ export function ChatView() {
                 </div>
               ) : turns.length || live || extras.length ? (
                 <ChatActionsContext.Provider value={{ say: (t) => void send(t, []) }}>
-                  <ThreadView agent={agent} turns={turns} live={live} extras={extras} members={members} cards={cards} />
+                  <ThreadView agent={agent} turns={turns} live={live} extras={extras} members={everyone} cards={cards} />
                 </ChatActionsContext.Provider>
               ) : (
                 <EmptyState className="flex-1">

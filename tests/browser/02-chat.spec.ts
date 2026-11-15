@@ -40,7 +40,7 @@ test("agent chat: a real turn streams its steps, a refused payment shows its car
 
   // 3. @Grok Bot (from the team list in the @ menu) hands a job to the agent's background run
   await expect(box).toBeEditable();
-  await box.pressSequentially("@Gro");
+  await box.pressSequentially("@Gro", { delay: 60 });
   await page.getByRole("option", { name: /Grok Bot/ }).click();
   const job = `check the treasury balance in the background ${Date.now()}`;
   await box.pressSequentially(job);

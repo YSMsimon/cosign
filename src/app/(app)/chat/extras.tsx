@@ -5,10 +5,11 @@
  * own loop when none is connected) and the team's @mentions to and from it. Plus the cards under a turn's tool calls
  * (approvals, payments to cosign, funding requests): `useToolCards`.
  */
+import { useEffect } from "react";
 import { CalendarClock } from "lucide-react";
 import { Tag } from "@/components/ui/tag";
 import { api, type AgentView, type Task, type TeamMessage } from "@/lib/client/api";
-import { useData } from "@/lib/client/data";
+import { invalidate, useData } from "@/lib/client/data";
 import type { Agent } from "../../mockups/v2/agents";
 import { Said, type Member } from "../../mockups/v2/mentions";
 import { Steps } from "../../mockups/v2/parts";
@@ -83,9 +84,17 @@ export function useChatExtras(agent: Agent | undefined, view: AgentView | undefi
   const { wsId, ws } = useCosign();
   const { tasks, views } = useAgentsData();
   const feed = useData(`team-messages:${wsId}`, () => api.teamMessages(wsId, 200));
-  if (!agent || !view) return [];
   const me = ws.me.memberId;
-  const jobs = tasks.filter((t) => t.agentId === agent.id && t.kind !== "voice" && t.requestedBy === me && t.source !== "test");
+  // background jobs only: not voice calls (they are the conversation itself) and not Grok Bot's connection checks
+  const jobs = agent ? tasks.filter((t) => t.agentId === agent.id && t.kind === "task" && t.requestedBy === me) : [];
+  // a job's steps and result arrive while it runs (no live event for those): look again every 2 s until it ends
+  const running = jobs.some((t) => !["done", "failed"].includes(t.status));
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => invalidate(`tasks:${wsId}`), 2000);
+    return () => clearInterval(id);
+  }, [running, wsId]);
+  if (!agent || !view) return [];
   const mine = new Set(jobs.map((t) => t.id));
   const messages = (feed.data?.messages ?? []).filter(
     (m) => (m.fromKind === "agent" && m.fromId === agent.id) || (m.toKind === "agent" && m.toId === agent.id) || (m.fromTaskId && mine.has(m.fromTaskId)),

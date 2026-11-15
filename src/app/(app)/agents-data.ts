@@ -1,6 +1,7 @@
 "use client";
 
 /** The workspace's agents as the screens draw them (the design boards' Agent shape), from the real API. */
+import { useMemo } from "react";
 import type { OrbHue } from "@/components/orb-avatar";
 import { api, type AgentDetail, type AgentView, type Task, type WorkspaceDetail } from "@/lib/client/api";
 import { useData } from "@/lib/client/data";
@@ -44,17 +45,13 @@ export function useAgentsData() {
   const { wsId } = useCosign();
   const agents = useData(`agents:${wsId}`, () => api.agents(wsId));
   const tasks = useData(`tasks:${wsId}`, () => api.tasks(wsId));
-  const list = (agents.data?.agents ?? []).filter((a) => a.status === "active");
-  const t = tasks.data?.tasks ?? [];
-  return {
-    loading: agents.loading,
-    error: agents.error,
-    reload: agents.reload,
-    views: list,
-    usable: list.filter((a) => a.you.canUse).map((a) => toAgent(a, t)),
-    all: list.map((a) => toAgent(a, t)),
-    tasks: t,
-  };
+  // the same arrays until the data changes, so lists built from them (the @ list) stay put between renders
+  const shaped = useMemo(() => {
+    const list = (agents.data?.agents ?? []).filter((a) => a.status === "active");
+    const t = tasks.data?.tasks ?? [];
+    return { views: list, usable: list.filter((a) => a.you.canUse).map((a) => toAgent(a, t)), all: list.map((a) => toAgent(a, t)), tasks: t };
+  }, [agents.data, tasks.data]);
+  return { loading: agents.loading, error: agents.error, reload: agents.reload, ...shaped };
 }
 
 /** What the agent panel in the chat shows: its wallet and its place on the treasury. */
