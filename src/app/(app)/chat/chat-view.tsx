@@ -7,7 +7,10 @@
  */
 import { useCallback, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Bot, Hash, Info, PaperclipIcon, Plus, RefreshCw, Search, UserPlus } from "lucide-react";
+import { Bot, Hash, Info, Mic, MicOff, PaperclipIcon, PhoneOff, Plus, RefreshCw, Search, UserPlus } from "lucide-react";
+import { loader, Matrix } from "@/components/ui/matrix";
+import type { AgentState } from "@/components/ui/orb";
+import { ShimmeringText } from "@/components/ui/shimmering-text";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -21,19 +24,22 @@ import { AgentAbout } from "../../mockups/v2/agent-about";
 import { AgentList, NewAgentDialog, type Agent } from "../../mockups/v2/agents";
 import { Composer, toPicked, type Picked } from "../../mockups/v2/composer";
 import { GROK_BOT, mentionedIn, type Member } from "../../mockups/v2/mentions";
-import { AgentOrb } from "../../mockups/v2/parts";
+import { AgentOrb, HUE_COLORS } from "../../mockups/v2/parts";
 import { RoomView } from "../../mockups/v2/room-view";
 import { InviteTeammateDialog, JoinRoomDialog, ME, NewRoomDialog, RoomList } from "../../mockups/v2/rooms";
 import { useAgents as useSampleAgents, useRooms, useTeam as useSampleTeam } from "../../mockups/v2/store";
 import { aboutInfo, hueOf, useAgentsData } from "../agents-data";
 import { AppShell, initialsOf } from "../app-shell";
-import { useCosign } from "../cosign";
+import { useCosign, useLive } from "../cosign";
 import { stepLine, searchLine } from "./steps";
 import { buildTurns, ThreadView, type LiveTurn } from "./thread-view";
 import { useChatExtras, useToolCards } from "./extras";
 import { ChatActionsContext } from "./actions";
+import { ToolCard } from "./cards";
+import { useVoiceCall, type Phase } from "./voice";
 
 const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
+const orbState: Record<Phase, AgentState> = { connecting: "thinking", listening: "listening", thinking: "thinking", talking: "talking" };
 
 /** The role an invite gets: "Member" talks to agents (Agent user), "Approver" can also approve. */
 const roleFor = (roles: Role[], pick: string) => (pick === "Approver" ? roles.find((r) => r.key === "approver") : roles.find((r) => r.name === "Agent user") ?? roles.find((r) => !r.system));
@@ -82,6 +88,15 @@ export function ChatView() {
 
   const extras = useChatExtras(agent, view, members);
   const cards = useToolCards(agent);
+  const voice = useVoiceCall(agent);
+  // a payment drafted by voice opens its cosign card in this call (the server says which session it came from)
+  const [callDraft, setCallDraft] = useState<{ session: string; proposalId: number } | null>(null);
+  useLive(
+    "proposal.drafted",
+    useCallback((d: Record<string, unknown>) => {
+      if (d.taskId && d.proposalId !== undefined) setCallDraft({ session: String(d.taskId), proposalId: Number(d.proposalId) });
+    }, []),
+  );
 
   const addFiles = (list: FileList | null) => {
     if (list?.length) setFiles((cur) => [...cur, ...toPicked(list)]);
@@ -209,7 +224,7 @@ export function ChatView() {
           </div>
 
           <p className="mt-5 mb-1 px-2 text-xs font-medium text-muted-foreground">Rooms</p>
-          <RoomList rooms={rooms} selected={room?.id ?? ""} onSelect={selectRoom} />
+          <RoomList rooms={rooms} selected={room?.id ?? ""} onSelect={(id) => !voice.inCall && selectRoom(id)} />
 
           <p className="mt-5 mb-1 px-2 text-xs font-medium text-muted-foreground">Agents</p>
           {agentsData.loading ? (
@@ -234,7 +249,7 @@ export function ChatView() {
             <AgentList
               agents={agents}
               selected={room ? "" : (agent?.id ?? "")}
-              onSelect={select}
+              onSelect={(id) => !voice.inCall && select(id)}
               onDelete={async (id) => {
                 try {
                   await api.retire(id);
@@ -316,8 +331,8 @@ export function ChatView() {
             <div className="flex min-w-0 flex-1 flex-col">
               <header className="flex items-center gap-1.5 px-8 py-4 text-sm text-muted-foreground">
                 <span className="font-medium text-foreground">{agent.name}</span>
-                <StatusBadge status={agent.online || live?.running ? "online" : "offline"} pulse={agent.online || !!live?.running} className="ml-2">
-                  {agent.online || live?.running ? "Working" : "Idle"}
+                <StatusBadge status={agent.online || live?.running || voice.inCall ? "online" : "offline"} pulse={agent.online || !!live?.running || voice.inCall} className="ml-2">
+                  {voice.inCall ? "In a call" : agent.online || live?.running ? "Working" : "Idle"}
                 </StatusBadge>
                 <Button
                   variant={showAbout ? "secondary" : "ghost"}
@@ -331,7 +346,28 @@ export function ChatView() {
                 </Button>
               </header>
 
-              {thread.loading ? (
+              {voice.inCall ? (
+                /* the call: just the agent's orb, its voice level and what was last said */
+                <div className="flex flex-1 flex-col items-center justify-center gap-6 px-8">
+                  <AgentOrb hue={agent.hue} state={orbState[voice.phase]} className="size-56 animate-in fade-in zoom-in-50 duration-700" />
+                  <ShimmeringText key={voice.statusText} text={voice.statusText} className="text-lg font-medium" repeat />
+                  <div className="flex h-16 items-center">
+                    {voice.phase === "connecting" || voice.phase === "thinking" ? (
+                      <Matrix rows={7} cols={7} frames={loader} fps={12} loop autoplay size={8} gap={3} palette={{ on: HUE_COLORS[agent.hue][0], off: "rgba(120,120,120,0.15)" }} ariaLabel="Working" />
+                    ) : (
+                      <Matrix rows={7} cols={20} mode="vu" levels={voice.levels} size={8} gap={3} palette={{ on: HUE_COLORS[agent.hue][0], off: "rgba(120,120,120,0.15)" }} ariaLabel="Voice level" />
+                    )}
+                  </div>
+                  <p className="h-10 max-w-md text-center text-sm text-muted-foreground" aria-live="polite">
+                    {voice.caption}
+                  </p>
+                  {callDraft && callDraft.session === voice.sessionId && (
+                    <div className="w-full max-w-md">
+                      <ToolCard agent={agent} call={{ name: "propose_payment", args: {}, result: { proposalId: String(callDraft.proposalId) }, t: new Date(0).toISOString() }} />
+                    </div>
+                  )}
+                </div>
+              ) : thread.loading ? (
                 <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-8 py-4" aria-label="Loading the conversation">
                   <Skeleton className="ml-auto h-10 w-2/3 rounded-2xl" />
                   <Skeleton className="h-24 w-3/4 rounded-2xl" />
@@ -363,7 +399,32 @@ export function ChatView() {
               )}
 
               <div className="px-8 pb-6">
-                <Composer placeholder={`Message ${agent.name}`} files={files} setFiles={setFiles} onSend={(t, p) => void send(t, p)} busy={!!live?.running} mentions={members} />
+                {voice.error && (
+                  <Alert variant="destructive" className="mx-auto mb-3 max-w-2xl" action={<Button size="xs" variant="ghost" onClick={voice.clearError}>Dismiss</Button>}>
+                    <AlertTitle>The call didn&apos;t work</AlertTitle>
+                    <AlertDescription>{voice.error}</AlertDescription>
+                  </Alert>
+                )}
+                {voice.inCall ? (
+                  <div className="mx-auto flex max-w-2xl items-center justify-center gap-3">
+                    <Button variant="secondary" size="icon" aria-label={voice.muted ? "Unmute" : "Mute"} onClick={() => voice.setMuted(!voice.muted)}>
+                      {voice.muted ? <MicOff /> : <Mic />}
+                    </Button>
+                    <Button variant="destructive" onClick={voice.end}>
+                      <PhoneOff /> End call
+                    </Button>
+                  </div>
+                ) : (
+                  <Composer
+                    placeholder={`Message ${agent.name}`}
+                    files={files}
+                    setFiles={setFiles}
+                    onSend={(t, p) => void send(t, p)}
+                    onTalk={voice.configured ? () => void voice.start() : undefined}
+                    busy={!!live?.running}
+                    mentions={members}
+                  />
+                )}
               </div>
             </div>
             {showAbout && <AgentAbout agent={agent} onClose={() => setShowAbout(false)} info={aboutInfo(detail.data?.agent, ws, view?.wallet ?? "")} />}

@@ -7,12 +7,20 @@
 import { generatePrivateKey } from "viem/accounts";
 import { api, fund, send, signIn, type PreparedTx } from "../e2e/helpers";
 import { personFromKey, readState, writeState, type State } from "./shared";
+import { ensureQuestion, ensureVoice } from "./voice-setup";
 
 /** The agent's own wallet pays its sends and its network fees (USDC is Arc's gas): keep a little in it. */
 async function topUp(wallet: string, usdc: number) {
   if (usdc >= 0.08) return;
   await fund(wallet, "0.1");
   console.log(`[browser] topped up the agent's wallet (${usdc} → +0.1 USDC)`);
+}
+
+/** The voice spec's agent on ElevenLabs and its spoken question (only when the voice spec is in the run). */
+async function voice(agentId: string) {
+  if (process.argv.some((a) => a.includes("spec") && !a.includes("06-voice"))) return;
+  ensureQuestion();
+  console.log(`[browser] ${await ensureVoice(agentId)}`);
 }
 
 export default async function globalSetup() {
@@ -26,6 +34,7 @@ export default async function globalSetup() {
       if (r.status === 200 && a.status === 200 && a.json.agent.status === "active") {
         console.log(`[browser] reusing workspace ${s.ws} (made ${s.createdAt}); FRESH=1 makes a new one`);
         await topUp(a.json.agent.wallet, Number(a.json.agent.balances.walletUsdc));
+        await voice(s.agent);
         return;
       }
     } catch {
@@ -69,4 +78,5 @@ export default async function globalSetup() {
   const s: State = { ownerKey, ws, treasury, agent: agentId, agentName: "Clerk", lena, createdAt: new Date().toISOString() };
   writeState(s);
   console.log(`[browser] made workspace ${ws} (treasury ${treasury})`);
+  await voice(agentId);
 }
