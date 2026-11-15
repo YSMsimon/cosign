@@ -15,6 +15,24 @@ export function ensureQuestion() {
   execFileSync("say", ["-o", QUESTION_WAV, "--data-format=LEI16@48000", "[[slnc 4500]] What is waiting for approval right now?"]);
 }
 
+/** Spoken questions for the voice tool test, one per kind of tool (and one with none, for the model's own time). */
+export const VOICE_CASES = [
+  { id: "hello", text: "Say hello to me in five words.", tool: null },
+  { id: "balances", text: "How much USDC is in your wallet and in the treasury?", tool: "get_balances" },
+  { id: "proposals", text: "What is waiting for a cosign right now?", tool: "list_proposals" },
+  { id: "payees", text: "Who are you allowed to pay?", tool: "list_allowed" },
+  // a new invoice number each run: asked to draft one that already exists, the agent rightly points to the open proposal
+  { id: "draft", text: `Draft ten cents to Lena for invoice ${300 + Math.floor(Math.random() * 600)}.`, tool: "propose_payment" },
+  { id: "funds", text: "Ask a person to add five dollars to the treasury.", tool: "request_funds" },
+];
+export const clipPath = (id: string) => `node_modules/.cosign-tmp/voice-tools/${id}.wav`;
+
+/** Each question as a WAV (macOS `say`), made once. */
+export function ensureClips() {
+  mkdirSync("node_modules/.cosign-tmp/voice-tools", { recursive: true });
+  for (const c of VOICE_CASES) if (c.id === "draft" || !existsSync(clipPath(c.id))) execFileSync("say", ["-o", clipPath(c.id), "--data-format=LEI16@48000", c.text]);
+}
+
 export async function ensureVoice(agentId: string): Promise<string> {
   if (!process.env.ELEVENLABS_API_KEY) return "no ELEVENLABS_API_KEY: the voice spec skips";
   const { readConfig, setupVoice } = await import("../../src/lib/server/voice");

@@ -46,7 +46,9 @@ export function requestFunds(o: { workspaceId: string; agentId: string; memberId
   const reason = o.reason.trim().slice(0, 500) || "the treasury is running short";
   const ws = db().select().from(schema.workspaces).where(eq(schema.workspaces.id, o.workspaceId)).get();
   if (!ws) return { refused: true as const, reason: "no workspace" };
-  const asked = fundersOf(ws.id).find((m) => m.id !== o.memberId) ?? fundersOf(ws.id)[0];
+  // the person the agent works for, when they may add funds themselves (they approve it on their screen); else someone who may
+  const funders = fundersOf(ws.id);
+  const asked = funders.find((m) => m.id === o.memberId) ?? funders[0];
   if (!asked) return { refused: true as const, reason: "nobody in this workspace may add funds" };
   const requestId = id("fund");
   db()

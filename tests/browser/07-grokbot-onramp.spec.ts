@@ -67,7 +67,8 @@ test("Grok Bot and the onramp card: a job on the agent's Grok Bot routine is Gro
 
   // 3. the agent asks for money for the treasury; the approver's card opens Circle's onramp in a new tab
   await ask(page, `The treasury needs $5 more to pay three contractors this week (${tag}). Use request_funds for $5.00 with that reason.`);
-  const card = page.getByRole("alert").filter({ hasText: "Add $5.00 to the treasury?" }).last();
+  // this request's card (its reason carries the tag): older $5 requests may still be open in the conversation
+  const card = page.getByRole("alert").filter({ hasText: "Add $5.00 to the treasury?" }).filter({ hasText: String(tag) }).last();
   await expect(card).toBeVisible({ timeout: 120_000 });
   const popup = context.waitForEvent("page");
   await card.getByRole("button", { name: "Approve" }).click();

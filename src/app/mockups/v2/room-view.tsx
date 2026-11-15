@@ -88,6 +88,9 @@ export function RoomView({
   const [replies, setReplies] = useState<{ rid: string; author: string; reply: RoomReply }[]>([]); // real answers still coming
 
   const extra = lines[key] ?? [];
+  // only your latest message anchors the scroll (see the chat's thread view: the scroller jumps to the first anchor it
+  // hasn't handled when an answer replaces its live copy)
+  const lastYou = extra.findLastIndex((l) => l.who === "you");
   const roomAgents = agents.filter((a) => room.members.includes(a.id));
   const members = roomMembers(room, team, agents);
   /* who a message can name, you included (Grok Bot may @ you) */
@@ -210,7 +213,7 @@ export function RoomView({
 
                       {/* the team at work: you hand a routine to Clerk, Clerk hands it to Grok Bot, and on Friday Grok Bot runs it,
                           checks Clerk's drafts against the invoices, hands a mistake back, and confirms the payments onchain */}
-                      <MessageScrollerItem messageId="r4" scrollAnchor>
+                      <MessageScrollerItem messageId="r4" scrollAnchor={extra.length === 0 && replies.length === 0}>
                         <YouSaid line={{ who: "you", text: "x" }}>
                           <Said text="@Clerk set up a schedule: pay the contractors every Friday at 9." members={named} />
                         </YouSaid>
@@ -353,7 +356,7 @@ export function RoomView({
                       </>
                     );
                     return (
-                      <MessageScrollerItem key={i} messageId={`x${i}`} scrollAnchor={l.who === "you"}>
+                      <MessageScrollerItem key={i} messageId={`x${i}`} scrollAnchor={l.who === "you" && i === lastYou}>
                         {l.who === "you" ? (
                           <YouSaid line={l}>
                             <Said text={l.text} members={members} />

@@ -3,14 +3,46 @@
 /**
  * A voice call with the agent, for real: Cosign opens a voice session (POST /agents/:id/voice → a signed URL and the
  * session's variables), ElevenLabs does the ears and the mouth, and every turn is answered by the same agent in your
- * own thread (its Custom LLM is our endpoint). The orb's state follows the call; while it works, its status line is
- * the step the agent is on (from the session's recorded tool calls).
+ * own thread (its Custom LLM is our endpoint). The orb's state follows the call; while it works, its step line shows
+ * what it has done this turn (from the session's recorded tool calls). Its words show as they are spoken: ElevenLabs
+ * sends each chunk of audio with the time of every character, so the caption keeps pace with the voice. Before any
+ * audio, the text as it is written stands in (agent_chat_response_part), and the whole answer after that.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useConversation } from "@elevenlabs/react";
 import { api } from "@/lib/client/api";
 import { invalidate, useData } from "@/lib/client/data";
-import { stepLine } from "./steps";
+import { searchLine, stepLine } from "./steps";
+
+type Progress = { message: string; kind?: string }[];
+
+/** This turn's steps from the session's record: everything after the person last spoke. */
+function turnSteps(progress: Progress): string[] {
+  const from = progress.findLastIndex((p) => p.message.startsWith("person: "));
+  const out: { tool: string; label: string }[] = [];
+  for (const p of progress.slice(from + 1)) {
+    const m = p.message;
+    let x: RegExpExecArray | null;
+    if (p.kind === "tool") {
+      const tool = m.split(" · ")[0];
+      out.push({ tool, label: stepLine(tool, {}, null).label });
+    } else if ((x = /^called (\S+)(?: (\{.*\}))?$/.exec(m))) {
+      let args: Record<string, unknown> = {};
+      try {
+        args = x[2] ? (JSON.parse(x[2]) as Record<string, unknown>) : {};
+      } catch {
+        /* cut off: the label goes without the details */
+      }
+      out.push({ tool: x[1], label: stepLine(x[1], args, null).label });
+    }
+    else if ((x = /^searched \((\w+)\): ?(.*)$/.exec(m))) out.push({ tool: x[1], label: searchLine(x[1], x[2]) });
+    else if ((x = /^(\S+) (refused|failed): /.exec(m))) {
+      const i = out.findLastIndex((o) => o.tool === x![1]);
+      if (i >= 0) out[i] = { ...out[i], label: `${out[i].label} · ${x[2]}` };
+    }
+  }
+  return out.map((o) => o.label);
+}
 
 export type Phase = "connecting" | "listening" | "thinking" | "talking";
 
@@ -25,38 +57,91 @@ export function useVoiceCall(agent: { id: string; name: string } | undefined) {
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lines, setLines] = useState<{ who: "you" | "agent"; text: string; at: number }[]>([]);
-  const [working, setWorking] = useState<string | null>(null);
+  const [steps, setSteps] = useState<string[]>([]);
+  const [startedAt, setStartedAt] = useState<string | null>(null); // cards for what the agent did in this call
   const [levels, setLevels] = useState<number[]>(Array(20).fill(0));
   const agentId = useRef<string | null>(null);
+  // the agent's words this turn: as spoken (timed to the audio), and as written (before the audio catches up)
+  const [voiced, setVoiced] = useState("");
+  const [written, setWritten] = useState("");
+  const due = useRef<{ at: number; ch: string }[]>([]);
+  const pump = useRef<ReturnType<typeof setInterval> | null>(null);
+  const clearWords = useCallback(() => {
+    due.current = [];
+    setVoiced("");
+    setWritten("");
+  }, []);
+  // reveal each spoken character at its time in the audio
+  const reveal = useCallback((chars: string[], starts: number[]) => {
+    const t0 = performance.now();
+    chars.forEach((ch, i) => due.current.push({ at: t0 + (starts[i] ?? 0), ch }));
+    pump.current ??= setInterval(() => {
+      const now = performance.now();
+      let add = "";
+      while (due.current.length && due.current[0].at <= now) add += due.current.shift()!.ch;
+      if (add) setVoiced((v) => v + add);
+      if (!due.current.length && pump.current) {
+        clearInterval(pump.current);
+        pump.current = null;
+      }
+    }, 50);
+  }, []);
+  useEffect(() => () => void (pump.current && clearInterval(pump.current)), []);
 
-  const conv = useConversation({
-    micMuted: muted,
-    onMessage: (m) => setLines((cur) => [...cur, { who: m.source === "user" ? "you" : "agent", text: m.message, at: Date.now() }]),
-    onError: (message) => setError(typeof message === "string" ? message : "The call had a problem."),
+  const conv = useConversation({ micMuted: muted });
+  /*
+   * The call's handlers go to startSession, so they belong to the session itself. Passed to the hook instead, they
+   * only reach the session if the hook is registered at the moment the call starts, and a page that suspends just
+   * then (a new orb loading its texture) drops them for the whole call: it talks, and nothing shows.
+   */
+  const handlers = useCallback(
+    () => ({
+    onMessage: (m: { source: string; message: string }) => {
+      if (m.source === "user") {
+        // a new turn: its own steps and words
+        clearWords();
+        setSteps([]);
+      }
+      setLines((cur) => [...cur, { who: m.source === "user" ? ("you" as const) : ("agent" as const), text: m.message, at: Date.now() }]);
+    },
+    onAgentChatResponsePart: (p: { text: string; type: "start" | "delta" | "stop" }) => {
+      if (p.type === "start") setWritten("");
+      else if (p.type === "delta") setWritten((w) => w + p.text);
+    },
+    onAudioAlignmentPlayback: ({ alignment }: { alignment: { chars: string[]; char_start_times_ms: number[] } }) => reveal(alignment.chars, alignment.char_start_times_ms),
+    onInterruption: () => {
+      due.current = []; // what it was about to say is cut off
+    },
+    onError: (message: unknown) => setError(typeof message === "string" ? message : "The call had a problem."),
     // dev only: where a call stops, in the browser console
-    onStatusChange: ({ status }) => devLog("status", status),
-    onDisconnect: (details) => devLog("disconnected", details),
-    onConnect: ({ conversationId }) => devLog("connected", conversationId),
-  });
+    onStatusChange: ({ status }: { status: string }) => devLog("status", status),
+    onDisconnect: (details: unknown) => devLog("disconnected", details),
+    onConnect: ({ conversationId }: { conversationId: string }) => devLog("connected", conversationId),
+    }),
+    [clearWords, reveal],
+  );
 
   const inCall = starting || conv.status === "connected" || conv.status === "connecting";
   const lastYou = lines.findLast((l) => l.who === "you")?.at ?? 0;
   const lastAgent = lines.findLast((l) => l.who === "agent")?.at ?? 0;
   const phase: Phase = starting || conv.status === "connecting" ? "connecting" : conv.isSpeaking ? "talking" : lastYou > lastAgent ? "thinking" : "listening";
 
-  // while the agent works on a spoken turn, show the step it is on (the voice session records each tool call)
+  // while the agent works on a spoken turn, show what it has done so far (the voice session records each tool call)
   useEffect(() => {
     if (!sessionId || phase !== "thinking") return;
-    const id = setInterval(async () => {
+    const look = async () => {
       try {
-        const { task } = await fetch(`/api/v1/tasks/${sessionId}`).then((r) => r.json() as Promise<{ task: { progress: { message: string; kind?: string }[] } }>);
-        const last = task.progress.filter((p) => p.kind === "tool").at(-1)?.message;
-        if (last) setWorking(`${stepLine(last.split(" · ")[0], {}, null).label}…`);
+        const { task } = await fetch(`/api/v1/tasks/${sessionId}`).then((r) => r.json() as Promise<{ task: { progress: Progress } }>);
+        setSteps(turnSteps(task.progress));
       } catch {
-        /* the status line just stays */
+        /* the step line just stays */
       }
-    }, 900);
-    return () => clearInterval(id);
+    };
+    const id = setInterval(look, 900);
+    return () => {
+      clearInterval(id);
+      void look(); // once more as it starts talking: the steps it finished with
+    };
   }, [sessionId, phase]);
 
   // the voice level: the agent's volume while it talks, yours while it listens
@@ -75,21 +160,24 @@ export function useVoiceCall(agent: { id: string; name: string } | undefined) {
     if (!agent) return;
     setError(null);
     setLines([]);
-    setWorking(null);
+    setSteps([]);
+    clearWords();
+    setStartedAt(new Date().toISOString());
     setMuted(false);
     setStarting(true);
     try {
       const s = await api.startVoice(agent.id);
+      invalidate(`voice:${agent.id}`); // a first call may have just set its voice up
       if (!s.signedUrl) throw new Error("ElevenLabs didn't give a signed URL for this call.");
       agentId.current = agent.id;
       setSessionId(s.sessionId);
-      conv.startSession({ signedUrl: s.signedUrl, dynamicVariables: s.dynamicVariables, connectionType: "websocket" });
+      conv.startSession({ signedUrl: s.signedUrl, dynamicVariables: s.dynamicVariables, connectionType: "websocket", ...handlers() });
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setStarting(false);
     }
-  }, [agent, conv]);
+  }, [agent, conv, handlers, clearWords]);
 
   const end = useCallback(() => {
     conv.endSession();
@@ -105,16 +193,22 @@ export function useVoiceCall(agent: { id: string; name: string } | undefined) {
   }, [conv.status]);
 
   const caption = lines.at(-1)?.text ?? null;
+  const asked = lines.findLast((l) => l.who === "you")?.text ?? null;
+  // its words this turn: as spoken if the audio carries timings, else as written, else the last whole answer
+  const said = voiced.trim() || written.trim() || (lastAgent > lastYou ? (lines.findLast((l) => l.who === "agent")?.text ?? null) : null);
   const statusText =
     phase === "connecting"
       ? `Connecting to ${agent?.name}...`
       : phase === "thinking"
-        ? (working ?? "Thinking...")
+        ? steps.length
+          ? `${steps.at(-1)}…`
+          : "Thinking..."
         : phase === "talking"
           ? `${agent?.name} is talking`
           : muted
             ? "Muted"
             : "Listening";
 
-  return { configured: !!status.data?.configured, inCall, phase, statusText, caption, levels, muted, setMuted, start, end, error, clearError: () => setError(null), sessionId, lines };
+  // Talk shows when the agent has a voice, or will get one on its first call
+  return { configured: !!status.data?.configured || !!(status.data as { ready?: boolean } | undefined)?.ready, inCall, phase, statusText, caption, asked, said, steps, levels, muted, setMuted, start, end, error, clearError: () => setError(null), sessionId, lines, startedAt };
 }

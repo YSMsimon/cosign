@@ -361,7 +361,7 @@ function Ledger({
                   <TableCell>
                     <span className="inline-flex items-center gap-1.5">
                       {p.byHue || (p.byHue === undefined && p.by === "Clerk") ? (
-                        <AgentOrb hue={p.byHue ?? "blue"} still className="size-5" />
+                        <AgentOrb hue={p.byHue ?? "blue"} className="size-5" />
                       ) : (
                         <Avatar className="size-5">
                           <AvatarFallback className="text-[0.55rem]">{p.byInitials ?? "SY"}</AvatarFallback>

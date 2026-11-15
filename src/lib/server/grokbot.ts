@@ -192,7 +192,7 @@ export function actorFor(memberId: string | null): Actor {
 export async function startTask(
   agent: AgentRow,
   ws: WorkspaceRow,
-  o: { kind: "ping" | "task"; source: "connect" | "member" | "schedule" | "agent"; instructions: string; requestedBy: string | null; scheduleId?: string | null; base: string },
+  o: { kind: "ping" | "task"; source: "connect" | "member" | "schedule" | "agent" | "watch"; instructions: string; requestedBy: string | null; scheduleId?: string | null; base: string },
 ): Promise<{ task: TaskRow; runLater?: () => Promise<void> }> {
   const c = connectionOf(agent.id);
   const useBot = !!c && (o.kind === "ping" || c.status === "connected");

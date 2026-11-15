@@ -36,6 +36,9 @@ export default async function globalSetup() {
         await topUp(a.json.agent.wallet, Number(a.json.agent.balances.walletUsdc));
         // back-to-back runs make many payments: a test agent may make 60 an hour (the default is 10)
         if ((a.json.agent.controls.maxPaymentsPerHour ?? 0) < 60) await api(owner, "PATCH", `/agents/${s.agent}`, { controls: { maxPaymentsPerHour: 60 } });
+        // ...and spend more in a day than the default $0.50 (per payment stays $0.05), so a day of runs doesn't hit it
+        const p = a.json.agent.controls.purchases;
+        if ((p.daily ?? 0) < 5) await api(owner, "PATCH", `/agents/${s.agent}`, { controls: { purchases: { ...p, daily: 5, weekly: 10, monthly: 20 } } });
         await voice(s.agent);
         return;
       }

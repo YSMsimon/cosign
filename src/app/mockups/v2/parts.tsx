@@ -1,7 +1,7 @@
 "use client";
 
 /** Simple version: two pages (Team, Permissions) and one subpage (a session). Pesto UI + shadcn only. */
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { CircleCheck, ExternalLink, MessagesSquare, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -87,11 +87,88 @@ function towardWhite(hex: string, w: number) {
 const HUE_SEED: Record<OrbHue, number> = { violet: 1000, pink: 2000, orange: 3000, blue: 4000, teal: 5000 };
 
 /**
+ * The live orb canvases on a page. Each ElevenLabs Orb is its own WebGL canvas and a browser gives a page about 16,
+ * so the agent orbs share at most LIVE_ORBS of them: an orb asks for one while it is on screen and gives it back when
+ * it scrolls away or goes. Orbs showing a state (a call, thinking) go first in line.
+ */
+const LIVE_ORBS = 12;
+const orbSlots = (() => {
+  const line: string[] = [];
+  let live = new Set<string>();
+  const subs = new Set<() => void>();
+  const settle = () => {
+    live = new Set(line.slice(0, LIVE_ORBS));
+    for (const f of subs) f();
+  };
+  return {
+    ask(id: string, first: boolean) {
+      if (line.includes(id)) return;
+      if (first) line.unshift(id);
+      else line.push(id);
+      settle();
+    },
+    leave(id: string) {
+      const i = line.indexOf(id);
+      if (i < 0) return;
+      line.splice(i, 1);
+      settle();
+    },
+    subscribe(f: () => void) {
+      subs.add(f);
+      return () => {
+        subs.delete(f);
+      };
+    },
+    has: (id: string) => live.has(id),
+  };
+})();
+
+/**
+ * Whether this orb may draw its live canvas now: it is on screen (or showing a state), it has stopped animating, and it
+ * got one of the slots. The canvas measures its box once, when it mounts, and a scale animation around it (a dialog
+ * opening, the call orb zooming in) would leave it sized for the smaller box, drawn off-centre, until the page resizes.
+ */
+function useLiveOrb(ref: React.RefObject<HTMLDivElement | null>, priority: boolean, off: boolean) {
+  const id = useId();
+  const [seen, setSeen] = useState(false);
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || off) return;
+    const until = performance.now() + 1500;
+    let frame = 0;
+    const check = () => {
+      // drawn size = layout size: no scale on it or above it any more
+      const ok = Math.abs(el.getBoundingClientRect().width - el.offsetWidth) < 0.5;
+      if (ok || performance.now() > until) setSettled(true);
+      else frame = requestAnimationFrame(check);
+    };
+    frame = requestAnimationFrame(check);
+    return () => cancelAnimationFrame(frame);
+  }, [ref, off]);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || off) return;
+    const io = new IntersectionObserver(([e]) => setSeen(e.isIntersecting), { rootMargin: "120px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ref, off]);
+  const wants = !off && settled && (seen || priority);
+  useEffect(() => {
+    if (!wants) return;
+    orbSlots.ask(id, priority);
+    return () => orbSlots.leave(id);
+  }, [wants, id, priority]);
+  const live = useSyncExternalStore(orbSlots.subscribe, () => orbSlots.has(id), () => false);
+  return wants && live;
+}
+
+/**
  * An agent's orb, the same one everywhere, from idle to talking: Pesto's OrbAvatar (the hue's filled disc) with the
  * ElevenLabs Orb flowing inside it. The Orb draws its shapes on white; multiply keeps the disc's colour wherever
  * the Orb is white, so the disc stays full of colour and only changes inside. Nothing turns. A call changes
  * `state` on the orb already on screen (ElevenLabs' voice-chat blocks do the same) instead of swapping in another.
- * Each one is a WebGL canvas and a page gets about 16, so long lists use `still`: the disc alone.
+ * Every orb moves while it is on screen (they share the page's canvases, above); `still` keeps one to the disc.
  */
 export function AgentOrb({
   hue,
@@ -104,16 +181,21 @@ export function AgentOrb({
   still?: boolean;
   className?: string;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const live = useLiveOrb(ref, state !== null, still);
   return (
-    <div className={cn("relative isolate shrink-0 overflow-hidden rounded-full", className)}>
+    <div ref={ref} className={cn("relative isolate shrink-0 overflow-hidden rounded-full", className)}>
       <OrbAvatar hue={hue} className="absolute inset-0 size-full" />
-      {!still && (
-        <Orb
-          colors={ORB_COLORS[hue]}
-          seed={HUE_SEED[hue]}
-          agentState={state}
-          className="absolute inset-0 scale-110 mix-blend-multiply [html.dark_&]:mix-blend-screen"
-        />
+      {live && (
+        /* a canvas suspends its parent while it loads; this keeps that to the orb (the disc shows meanwhile) */
+        <Suspense fallback={null}>
+          <Orb
+            colors={ORB_COLORS[hue]}
+            seed={HUE_SEED[hue]}
+            agentState={state}
+            className="absolute -inset-[5%] mix-blend-multiply [html.dark_&]:mix-blend-screen"
+          />
+        </Suspense>
       )}
     </div>
   );

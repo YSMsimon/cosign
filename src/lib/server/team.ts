@@ -87,6 +87,11 @@ export function listTeam(o: { workspaceId: string; memberId: string | null; self
   return {
     people,
     agents,
+    grokBot: {
+      name: "Grok Bot",
+      does: "runs a job for you in the background (on your Grok Bot routine when one is connected); hand it work with mention(who: 'Grok Bot')",
+      connected: !!(o.selfAgentId && connectionOf(o.selfAgentId)?.status === "connected"),
+    },
     howTo: `Use mention with a name or id from this list. Mention only when something is wrong or needs someone; when work went fine, just report. You can ask the same agent ${MAX_ASKS_PER_PAIR} times in one chain (the first ask and 2 retries), and a chain stops after ${MAX_CHAIN_HOPS} agent hand-offs without a person: then mention a person.`,
   };
 }
@@ -109,7 +114,7 @@ function resolve(workspaceId: string, who: string): Target | null {
 export type MentionInput = { workspaceId: string; fromAgentId: string; memberId: string | null; fromTaskId?: string | null; who: string; message: string; base?: string };
 export type MentionResult =
   | { refused: true; reason: string }
-  | { posted: { id: string; to: { kind: "agent" | "person"; id: string; name: string } }; task?: { id: string; engine: string; status: string; error?: string | null } };
+  | { posted: { id: string; to: { kind: "agent" | "person" | "grokbot"; id: string; name: string } }; task?: { id: string; engine: string; status: string; error?: string | null }; note?: string };
 
 /**
  * Post a mention and, for an agent, start its task. Returns `runLater` when the task runs on our own loop (no Grok
@@ -124,6 +129,22 @@ export async function mention(o: MentionInput): Promise<{ result: MentionResult;
   const from = db().select().from(schema.agents).where(eq(schema.agents.id, o.fromAgentId)).get();
   if (!ws || !from) return refuse("this agent isn't in a workspace");
   const target = resolve(ws.id, o.who);
+  // "Grok Bot" (when no teammate has that name): a background job for you, on your Grok Bot routine (our own loop when none is connected). It shows in
+  // the person's chat with you as Grok Bot's turn, with its result.
+  if (!target && /^@?grok\s*bot$/i.test(o.who.trim())) {
+    const running = o.fromTaskId ? db().select().from(schema.tasks).where(eq(schema.tasks.id, o.fromTaskId)).get() : undefined;
+    if (running?.engine === "grokbot") return refuse("you are already running on Grok Bot: do the work yourself");
+    const { task, runLater } = await startTask(from, ws, { kind: "task", source: "agent", instructions: message, requestedBy: o.memberId, base: o.base ?? publicBase("http://localhost:3000") });
+    if (task.status === "failed") return refuse(`couldn't start the Grok Bot job: ${task.error ?? "unknown error"}`);
+    return {
+      result: {
+        posted: { id: task.id, to: { kind: "grokbot" as const, id: "grokbot", name: "Grok Bot" } },
+        task: { id: task.id, engine: task.engine, status: task.status, error: task.error },
+        note: "It runs in the background; its result shows in your chat with the person when it's done. Don't wait for it.",
+      },
+      runLater,
+    };
+  }
   if (!target) return refuse(`no teammate called "${o.who}": use list_team to see who you can mention`);
   if (target.kind === "agent" && target.agent.id === from.id) return refuse("you can't mention yourself");
 

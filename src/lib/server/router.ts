@@ -15,7 +15,7 @@ import type { ProposalDrafted } from "../agent/controls";
 import type { ActivityRow } from "../db/schema";
 import { requireAddress, requireAgentMember, requireMember, type Membership } from "./access";
 import { agentDetail, agentView, createAgent, listAgents, onchainStatus, requireSee, retireAgent, sweepAgent, updateAgent } from "./agents";
-import { memberThread, readThread, requireUse, runTurn, sseTurn } from "./chat";
+import { memberThread, readThread, requireUse, roomThread, runTurn, sseTurn } from "./chat";
 import { botContext, botTool, callback, connect, connectionOf, connectionView, disconnect, listTasks, publicBase, requireConnectRight, setupMessage, startTask, taskForToken, taskView } from "./grokbot";
 import { badRequest, errorResponse, forbidden, HttpError, notFound, parseBody } from "./http";
 import { activityMatcher, approverChangeTx, cancelTx, cosignTx, decideApproval, listApprovals, listProposals, workspaceActivity } from "./money";
@@ -215,10 +215,12 @@ route("GET", "/agents/:ag/onchain", async (req, p) => {
 route("POST", "/agents/:ag/chat", async (req, p) => {
   const { m, agent } = requireAgentMember(req, p.ag);
   requireUse(m, agent);
-  // note: context for this message only (e.g. the room it was sent in), given to the model but not saved in the thread
-  const b = await parseBody(req, z.object({ message: text, note: z.string().max(1000).optional() }));
+  // note: context for this message only (e.g. the room it was sent in), given to the model but not saved in the thread;
+  // room: the turn runs in that room's own thread with the agent, not in the one-to-one chat
+  const b = await parseBody(req, z.object({ message: text, note: z.string().max(1000).optional(), room: z.string().regex(/^[A-Za-z0-9_-]{1,48}$/).optional() }));
+  const thread = b.room ? roomThread(m.member.id, b.room) : memberThread(m.member.id);
   return sseTurn((onEvent) =>
-    runTurn(agent, m.workspace, { memberId: m.member.id, permissions: m.permissions }, memberThread(m.member.id), b.message, onEvent, null, { stream: true, turnNote: b.note }).then((r) => ({
+    runTurn(agent, m.workspace, { memberId: m.member.id, permissions: m.permissions }, thread, b.message, onEvent, null, { stream: true, turnNote: b.note }).then((r) => ({
       finalText: r.finalText,
       totals: r.totals,
       estCostUsd: r.estCostUsd,

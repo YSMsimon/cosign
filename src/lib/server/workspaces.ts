@@ -4,7 +4,7 @@
  */
 import { and, eq, sql } from "drizzle-orm";
 import { decodeEventLog, getAddress, isAddress, keccak256, type Address, type Hash } from "viem";
-import { approversOf, chain, treasuryState, usdcBalance } from "../arc";
+import { approversOf, chain, RECEIPT_POLL_MS, treasuryState, usdcBalance } from "../arc";
 import { formatUnits } from "viem";
 import { companyTreasuryAbi, treasuryFactoryAbi, TREASURY_FACTORY_ADDRESS } from "../contracts/abis";
 import { db, schema } from "../db";
@@ -52,7 +52,7 @@ export function prepareCreate(creator: string, o: { name: string; approvers?: st
 export async function createWorkspace(address: string, o: { name: string; txHash?: string; treasury?: string; title?: string }) {
   let treasury = o.treasury;
   if (o.txHash) {
-    const receipt = await chain.waitForTransactionReceipt({ hash: o.txHash as Hash, timeout: 60_000 });
+    const receipt = await chain.waitForTransactionReceipt({ hash: o.txHash as Hash, timeout: 60_000, pollingInterval: RECEIPT_POLL_MS });
     for (const log of receipt.logs) {
       if (lc(log.address) !== lc(TREASURY_FACTORY_ADDRESS)) continue;
       try {

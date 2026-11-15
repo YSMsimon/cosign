@@ -17,6 +17,8 @@ export function insertActivities(rows: NewActivity[]): ActivityRow[] {
     if (res[0]) inserted.push(res[0]);
   }
   for (const r of inserted) activityBus.emit("activity", r);
+  // Grok Bot watches the chain: a fresh payment or money in starts a job for it (../server/watch)
+  if (inserted.length) void import("../server/watch").then((m) => m.onNewActivity(inserted)).catch((e) => console.warn("[watch]", (e as Error).message));
   return inserted;
 }
 

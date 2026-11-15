@@ -44,7 +44,7 @@ export function HuePicker({ value, onChange }: { value: OrbHue; onChange: (hue: 
     <ToggleGroup type="single" variant="outline" value={value} onValueChange={(v) => v && onChange(v as OrbHue)} aria-label="Orb colour">
       {HUES.map((h) => (
         <ToggleGroupItem key={h} value={h} aria-label={hueName(h)} className="px-2">
-          <AgentOrb hue={h} still className="size-6" />
+          <AgentOrb hue={h} className="size-6" />
         </ToggleGroupItem>
       ))}
     </ToggleGroup>

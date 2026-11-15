@@ -48,7 +48,7 @@ export function useLive(event: Live, fn: Handler) {
 
 /** What each live event makes stale. */
 const STALE: Record<Live, string[]> = {
-  activity: ["ws:", "proposals:", "activity:", "spend:", "agent:"],
+  activity: ["ws:", "proposals:", "activity:", "spend:", "agent:", "tasks:"], // tasks: Grok Bot may start a job about it
   "proposal.drafted": ["proposals:", "spend:"],
   "team.message": ["team-messages:", "funding:", "tasks:"],
 };

@@ -2,7 +2,8 @@
 
 /**
  * Asking in a room, for real. Rooms themselves are still the design board's sample, but an agent named in a room is
- * your real agent of that name: it answers in your own conversation with it (told which room the message came from),
+ * your real agent of that name: it answers in this room's own thread with you (apart from your one-to-one chat; its
+ * memory and files are shared),
  * and the room shows its steps and its words as they stream in. "@Grok Bot …" starts a real background job for the
  * agent it names (or the room's first agent), and the room follows the job until Grok Bot reports back.
  */
@@ -58,14 +59,14 @@ export function useRoomAsk(): RoomAsk {
           const done = await chatTurn(agent.id, text, (s) => {
             cur = foldRunEvent(cur, s);
             update(now(true));
-          }, undefined, note);
+          }, undefined, note, room.id);
           cur = { ...cur, text: done.finalText };
           return now(false);
         } catch (e) {
           return { ...now(false), error: (e as Error).message };
         } finally {
-          // the turn is in your conversation with the agent too, with any cards it made
-          invalidate(`thread:${agent.id}`, `agent:${agent.id}`, "proposals:", "approvals:", "funding:", "spend:", "tasks:");
+          // what it did may show elsewhere (a draft's card, its balance)
+          invalidate(`agent:${agent.id}`, "proposals:", "approvals:", "funding:", "spend:", "tasks:");
         }
       }
 

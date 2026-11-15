@@ -37,52 +37,86 @@ class XaiError extends Error {
   }
 }
 
+/** A Grok call gives up when nothing arrives for this long (streamed) or it takes this long in all (not streamed). */
+const STALL_MS = 60_000;
+const WHOLE_MS = 150_000;
+
 /**
  * One model call. With `onText`, the call is streamed: each piece of the answer's text goes to `onText` as Grok writes
  * it, and the finished response (from `response.completed`) is returned, the same object as without streaming.
+ * A call that hangs (seen 2026-11-15: no answer for over a minute after a tool) is tried once more if nothing was said
+ * yet, else it fails with a plain error instead of leaving the turn hanging.
  */
 async function callXai(body: Record<string, unknown>, convId: string, onText?: (text: string) => void): Promise<XaiResponse> {
-  const res = await fetch(XAI, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.XAI_API_KEY}`,
-      "Content-Type": "application/json",
-      "x-grok-conv-id": convId,
-    },
-    body: JSON.stringify(onText ? { ...body, stream: true } : body),
-  });
-  if (!onText || !res.ok || !res.body) {
-    const json = (await res.json().catch(() => ({}))) as XaiResponse & { error?: unknown };
-    if (!res.ok) throw new XaiError(res.status, `xAI ${res.status}: ${JSON.stringify(json.error ?? json).slice(0, 400)}`);
-    return json;
-  }
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buf = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let cut: number;
-    while ((cut = buf.indexOf("\n\n")) >= 0) {
-      const chunk = buf.slice(0, cut);
-      buf = buf.slice(cut + 2);
-      const data = /^data: (.+)$/m.exec(chunk)?.[1];
-      if (!data || data === "[DONE]") continue;
-      let ev: { type?: string; delta?: string; response?: XaiResponse & { error?: unknown }; error?: unknown };
-      try {
-        ev = JSON.parse(data);
-      } catch {
-        continue;
-      }
-      if (ev.type === "response.output_text.delta" && ev.delta) onText(ev.delta);
-      else if (ev.type === "response.completed" && ev.response) return ev.response;
-      else if (ev.type === "response.failed" || ev.type === "response.incomplete" || ev.type === "error") {
-        throw new XaiError(502, `xAI stream ${ev.type}: ${JSON.stringify(ev.response?.error ?? ev.error ?? ev).slice(0, 400)}`);
-      }
+  for (let attempt = 0; ; attempt++) {
+    let said = false;
+    try {
+      return await callXaiOnce(body, convId, onText && ((t) => ((said = true), onText(t))));
+    } catch (e) {
+      if (e instanceof XaiError && e.status === 504 && attempt === 0 && !said) continue;
+      throw e;
     }
   }
-  throw new XaiError(502, "xAI stream ended before the response was complete");
+}
+
+async function callXaiOnce(body: Record<string, unknown>, convId: string, onText?: (text: string) => void): Promise<XaiResponse> {
+  const ctl = new AbortController();
+  const limit = onText ? STALL_MS : WHOLE_MS;
+  let timer = setTimeout(() => ctl.abort(), limit);
+  const touch = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => ctl.abort(), limit);
+  };
+  try {
+    const res = await fetch(XAI, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.XAI_API_KEY}`,
+        "Content-Type": "application/json",
+        "x-grok-conv-id": convId,
+      },
+      body: JSON.stringify(onText ? { ...body, stream: true } : body),
+      signal: ctl.signal,
+    });
+    if (!onText || !res.ok || !res.body) {
+      const json = (await res.json().catch(() => ({}))) as XaiResponse & { error?: unknown };
+      if (!res.ok) throw new XaiError(res.status, `xAI ${res.status}: ${JSON.stringify(json.error ?? json).slice(0, 400)}`);
+      return json;
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      touch();
+      buf += dec.decode(value, { stream: true });
+      let cut: number;
+      while ((cut = buf.indexOf("\n\n")) >= 0) {
+        const chunk = buf.slice(0, cut);
+        buf = buf.slice(cut + 2);
+        const data = /^data: (.+)$/m.exec(chunk)?.[1];
+        if (!data || data === "[DONE]") continue;
+        let ev: { type?: string; delta?: string; response?: XaiResponse & { error?: unknown }; error?: unknown };
+        try {
+          ev = JSON.parse(data);
+        } catch {
+          continue;
+        }
+        if (ev.type === "response.output_text.delta" && ev.delta) onText(ev.delta);
+        else if (ev.type === "response.completed" && ev.response) return ev.response;
+        else if (ev.type === "response.failed" || ev.type === "response.incomplete" || ev.type === "error") {
+          throw new XaiError(502, `xAI stream ${ev.type}: ${JSON.stringify(ev.response?.error ?? ev.error ?? ev).slice(0, 400)}`);
+        }
+      }
+    }
+    throw new XaiError(502, "xAI stream ended before the response was complete");
+  } catch (e) {
+    if (ctl.signal.aborted) throw new XaiError(504, `Grok didn't answer for ${limit / 1000} s; try again`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ───────────── compaction ─────────────
@@ -172,7 +206,9 @@ export async function runAgentTurn(opts: {
   via?: "voice"; // how this turn reached us, kept on its transcript entries
   stream?: boolean; // send the answer's text to onEvent as it is written ("text_delta"), not only at the end
 }) {
-  const model = opts.model ?? "grok-4.3";
+  // grok-4.20 reasoning (Simon, 2026-11-15): grok-4.3 stalled for 66 s and 122 s on single calls; this one stayed at
+  // 1.4–2.6 s on the same conversation and still checks with its tools. AGENT_MODEL overrides it.
+  const model = opts.model ?? (process.env.AGENT_MODEL || "grok-4.20-0309-reasoning");
   const maxSteps = opts.maxSteps ?? 16;
   const agent = opts.ctx.agentRef;
   const s = loadSession(agent, opts.compactAt ?? DEFAULT_COMPACT_AT, opts.thread);
@@ -220,6 +256,7 @@ export async function runAgentTurn(opts: {
   let nudged = false; // asked once for an answer after an empty reply
 
   try {
+    const calledTimes = new Map<string, number>(); // name + arguments → runs this turn
     for (let step = 1; step <= maxSteps; step++) {
       const cacheKey = `cosign-${agent}-${s.chainId}`;
       log.event("model_request", { step, chain: s.chainId, previous_response_id: previous ?? null, inputItems: input.length });
@@ -307,7 +344,13 @@ export async function runAgentTurn(opts: {
         const tool = toolByName.get(call.name);
         const sayFirst = takeSayFirst(args); // spoken by the voice before the tool runs; never passed to the tool
         log.event("tool_call", { tool: call.name, kind: tool?.kind, args, ...(sayFirst ? { sayFirst } : {}) });
-        const res = await runToolChecked(opts.ctx, call.name, args);
+        // the same lookup over and over (seen 2026-11-15: a frozen agent called list_allowed 16 times and never answered)
+        const sig = `${call.name}:${JSON.stringify(args)}`;
+        calledTimes.set(sig, (calledTimes.get(sig) ?? 0) + 1);
+        const res =
+          (calledTimes.get(sig) ?? 0) > 2
+            ? ({ status: "error", error: "already ran twice with the same arguments this turn", output: { error: "You already ran this with the same arguments in this turn. Don't run it again: answer the person now with what you have." } } as Awaited<ReturnType<typeof runToolChecked>>)
+            : await runToolChecked(opts.ctx, call.name, args);
         const output = res.output;
         if (res.status === "refused") {
           totals.refusals++;
@@ -336,6 +379,22 @@ export async function runAgentTurn(opts: {
       }
       saveSession(s);
       if (step === maxSteps) log.event("max_steps", { maxSteps });
+    }
+
+    // out of steps with nothing said: one last call, no tools, for the answer (the person always gets one)
+    if (!finalText && previous) {
+      const resp = await callXai(
+        { model, input: [...input, { role: "user", content: "(Cosign: you're out of steps for this turn. Answer the person now with what you found; no more tools.)" }], tools, tool_choice: "none", store: true, previous_response_id: previous, prompt_cache_key: `cosign-${agent}-${s.chainId}` },
+        `cosign-${agent}-${s.chainId}`,
+        onText,
+      );
+      const text = (resp.output ?? []).filter((o) => o.type === "message").flatMap((o) => (o.content as { text?: string }[] | undefined) ?? []).map((c) => c.text ?? "").join("");
+      s.lastResponseId = resp.id;
+      if (text) {
+        finalText = text;
+        s.transcript.push({ kind: "assistant", text, t: now(), ...(opts.via ? { via: opts.via } : {}) });
+      }
+      log.event("final_answer", { reason: "out of steps", chars: text.length });
     }
 
     const costUsd =

@@ -6,7 +6,7 @@
  * (approvals, payments to cosign, funding requests): `useToolCards`.
  */
 import { useEffect } from "react";
-import { CalendarClock } from "lucide-react";
+import { CalendarClock, Radio } from "lucide-react";
 import { Tag } from "@/components/ui/tag";
 import { api, type AgentView, type Task, type TeamMessage } from "@/lib/client/api";
 import { invalidate, useData } from "@/lib/client/data";
@@ -38,7 +38,7 @@ function JobView({ task, agent }: { task: Task; agent: Agent }) {
   const notes = task.progress.filter((p) => p.kind !== "tool").map((p) => p.message);
   const body = (
     <>
-      <Steps running={running} title={`${STATUS[task.status] ?? task.status} · ${task.instructions.length > 70 ? `${task.instructions.slice(0, 67)}…` : task.instructions}`} steps={[...notes, ...tools]} />
+      <Steps running={running} title={task.source === "watch" ? `${STATUS[task.status] ?? task.status} · checking it` : `${STATUS[task.status] ?? task.status} · ${task.instructions.length > 70 ? `${task.instructions.slice(0, 67)}…` : task.instructions}`} steps={[...notes, ...tools]} />
       {(task.result || task.error) && (
         <Words>
           <Said text={task.result ?? `Couldn't finish: ${task.error}`} members={[]} />
@@ -50,12 +50,21 @@ function JobView({ task, agent }: { task: Task; agent: Agent }) {
     </>
   );
   // a job on Grok Bot is Grok Bot's turn (its own icon, "Background"); on our own loop it is the agent's, tagged
-  return task.engine === "grokbot" ? (
-    <GrokSaid>{body}</GrokSaid>
-  ) : (
-    <AgentSaid name={agent.name} hue={agent.hue} thinking={running} tag={<Tag size="sm" variant="secondary">Background</Tag>}>
-      {body}
-    </AgentSaid>
+  const turn =
+    task.engine === "grokbot" ? (
+      <GrokSaid>{body}</GrokSaid>
+    ) : (
+      <AgentSaid name={agent.name} hue={agent.hue} thinking={running} tag={<Tag size="sm" variant="secondary">Background</Tag>}>
+        {body}
+      </AgentSaid>
+    );
+  if (task.source !== "watch") return turn;
+  // Grok Bot started this itself: the onchain event it is checking, as a line between the messages
+  return (
+    <div className="flex flex-col gap-4">
+      <ChainEvent icon={<Radio />}>{task.instructions.split("\n")[0]}</ChainEvent>
+      {turn}
+    </div>
   );
 }
 
@@ -86,7 +95,8 @@ export function useChatExtras(agent: Agent | undefined, view: AgentView | undefi
   const feed = useData(`team-messages:${wsId}`, () => api.teamMessages(wsId, 200));
   const me = ws.me.memberId;
   // background jobs only: not voice calls (they are the conversation itself) and not Grok Bot's connection checks
-  const jobs = agent ? tasks.filter((t) => t.agentId === agent.id && t.kind === "task" && t.requestedBy === me) : [];
+  // and the jobs Grok Bot starts itself when money moves onchain (source "watch"), for everyone who sees this agent
+  const jobs = agent ? tasks.filter((t) => t.agentId === agent.id && t.kind === "task" && (t.requestedBy === me || t.source === "watch")) : [];
   // a job's steps and result arrive while it runs (no live event for those): look again every 2 s until it ends
   const running = jobs.some((t) => !["done", "failed"].includes(t.status));
   useEffect(() => {

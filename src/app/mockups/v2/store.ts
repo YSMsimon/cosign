@@ -135,6 +135,13 @@ export function useRooms() {
   return {
     rooms,
     add: (r: Room) => roomsStore.write([...roomsStore.read(), r]),
+    /** delete a room, with what was said in it */
+    remove: (id: string) => {
+      roomsStore.write(roomsStore.read().filter((r) => r.id !== id));
+      const all = linesStore.read();
+      const keep = Object.fromEntries(Object.entries(all).filter(([k]) => k !== roomKey(id) && !k.endsWith(`:${roomKey(id)}`)));
+      linesStore.write(keep);
+    },
     /** add people or agents to a room (joining a public room adds yourself) */
     addMembers: (id: string, ids: string[]) =>
       roomsStore.write(roomsStore.read().map((r) => (r.id === id ? { ...r, members: [...new Set([...r.members, ...ids])] } : r))),

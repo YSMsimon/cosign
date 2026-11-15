@@ -92,7 +92,7 @@ export function WalletsTable({ treasuryUsdc = TREASURY.usdc, rows, treasury }: {
                 <TableRow key={a.id}>
                   <TableCell>
                     <span className="inline-flex items-center gap-2 font-medium">
-                      <AgentOrb hue={a.hue} still className="size-5" /> {a.name}&apos;s wallet
+                      <AgentOrb hue={a.hue} className="size-5" /> {a.name}&apos;s wallet
                     </span>
                   </TableCell>
                   <TableCell className="font-mono text-xs">{short(w.address)}</TableCell>

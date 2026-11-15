@@ -168,7 +168,7 @@ export function AgentRank({ rows = SAMPLE_RANK }: { rows?: RankRow[] } = {}) {
       <CardContent>
         <RankList>
           {rows.map((r, i) => (
-            <RankListItem key={`${r.name}-${i}`} rank={i + 1} media={<AgentOrb hue={r.hue} still className="size-7" />} label={r.name} sublabel={r.sub} value={usd(r.total)} bar={max > 0 ? r.total / max : 0} />
+            <RankListItem key={`${r.name}-${i}`} rank={i + 1} media={<AgentOrb hue={r.hue} className="size-7" />} label={r.name} sublabel={r.sub} value={usd(r.total)} bar={max > 0 ? r.total / max : 0} />
           ))}
         </RankList>
       </CardContent>

@@ -1,14 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowLeft, Globe, Hash, Lock, SearchIcon, UserPlus } from "lucide-react";
+import { ArrowLeft, EllipsisVertical, Globe, Hash, Lock, SearchIcon, Trash2, UserPlus } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   Dialog,
   DialogBody,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -45,8 +47,49 @@ export function RoomIcon({ room, size = "sm" }: { room: Pick<Room, "visibility">
   );
 }
 
+/** A room's ⋮ menu, like an agent's: Delete room, after a confirmation. */
+export function RoomMenu({ room, onDelete }: { room: Room; onDelete: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon-sm" aria-label={`Options for ${room.name}`}>
+            <EllipsisVertical />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem variant="destructive" onSelect={() => setConfirming(true)}>
+            <Trash2 /> Delete room
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Dialog open={confirming} onOpenChange={setConfirming}>
+        <DialogContent size="sm">
+          <DialogHeader>
+            <DialogHeaderText>
+              <DialogTitle>Delete #{room.name}?</DialogTitle>
+              <DialogDescription>The room and what was said in it go for everyone. The agents and people in it stay.</DialogDescription>
+            </DialogHeaderText>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="ghost">Cancel</Button>
+            </DialogClose>
+            <DialogClose asChild>
+              <Button variant="destructive" onClick={onDelete}>
+                Delete room
+              </Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 /** The rooms you are in, as Pesto User Rows like the agents under them. */
-export function RoomList({ rooms, selected, onSelect }: { rooms: Room[]; selected: string; onSelect: (id: string) => void }) {
+export function RoomList({ rooms, selected, onSelect, onDelete }: { rooms: Room[]; selected: string; onSelect: (id: string) => void; onDelete?: (id: string) => void }) {
   const mine = rooms.filter((r) => r.members.includes(ME));
   return (
     <div className="flex flex-col gap-1">
@@ -59,7 +102,15 @@ export function RoomList({ rooms, selected, onSelect }: { rooms: Room[]; selecte
           onClick={() => onSelect(r.id)}
           avatar={<RoomIcon room={r} />}
           label={r.name}
-          sublabel={`${r.visibility === "private" ? "Private" : "Public"} · ${r.members.length} members`}
+          sublabel={`${r.visibility === "private" ? "Private" : "Public"} · ${r.members.length} ${r.members.length === 1 ? "member" : "members"}`}
+          action={
+            onDelete && (
+              /* the row opens the room; clicks in the menu and its dialog stay here */
+              <span onClick={(e) => e.stopPropagation()}>
+                <RoomMenu room={r} onDelete={() => onDelete(r.id)} />
+              </span>
+            )
+          }
         />
       ))}
     </div>
@@ -83,7 +134,7 @@ export function RoomMembers({ room, team, agents }: { room: Room; team: Teammate
           </Avatar>
         ) : (
           <Avatar key={m.id} size="sm">
-            <AgentOrb hue={m.agent!.hue} still className="size-full" />
+            <AgentOrb hue={m.agent!.hue} className="size-full" />
           </Avatar>
         ),
       )}
@@ -146,7 +197,7 @@ function MemberPicker({
                 </ItemActions>
                 <ItemMedia>
                   {m.kind === "agent" ? (
-                    <AgentOrb hue={m.a.hue} still className="size-8" />
+                    <AgentOrb hue={m.a.hue} className="size-8" />
                   ) : (
                     <Avatar>
                       <AvatarFallback>{m.t.initials}</AvatarFallback>

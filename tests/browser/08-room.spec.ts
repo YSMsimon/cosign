@@ -17,7 +17,7 @@ async function askInRoom(page: Page, who: string, rest: string) {
   await box.press("Enter");
 }
 
-test("Rooms: an agent named in a room answers for real, its words streaming in; @Grok Bot in a room starts a real job", async ({ page }) => {
+test("Rooms: an agent named in a room answers for real in the room's own thread, its words streaming in; @Grok Bot in a room starts a real job", async ({ page }) => {
   test.setTimeout(360_000);
   const s = readState();
   const owner = personFromKey("owner", s.ownerKey);
@@ -52,12 +52,13 @@ test("Rooms: an agent named in a room answers for real, its words streaming in; 
   await expect(answer.locator('[data-slot="message-header"]')).toHaveText(new RegExp(`^${s.agentName}`));
   await expect(answer.getByText(/^(Worked for \d+ s · )?\d+ steps?$/)).toHaveCount(0); // a plain answer has no tool steps
 
-  // the turn is in your own conversation with Clerk (the room's name went to the agent, not into the thread)
+  // the room has its own thread with Clerk: none of it lands in your one-to-one chat
   const thread = await pageApi<Thread>(page, "GET", `/agents/${s.agent}/thread`);
-  const said = thread.json.messages.filter((m) => m.kind === "user").at(-1)?.text ?? "";
-  expect(said).toContain(`room check ${tag}`);
-  expect(said).not.toContain("#finance room");
-  expect(thread.json.messages.at(-1)?.text ?? "").toContain(`room check ${tag}`);
+  expect(thread.json.messages.some((m) => (m.text ?? "").includes(`room check ${tag}`)), "the room's turn stays out of the one-to-one chat").toBe(false);
+
+  // ...and Clerk remembers the room's conversation inside the room
+  await askInRoom(page, s.agentName, " what exact words did I just ask you to reply with? Answer with only those words.");
+  await expect(page.locator('[data-slot="message"]').filter({ hasText: `room check ${tag}` })).toHaveCount(3, { timeout: 60_000 });
 
   // 2. @Grok Bot in the room: a real background job for the room's agent, followed in the room until Grok Bot reports
   await signIn(owner);

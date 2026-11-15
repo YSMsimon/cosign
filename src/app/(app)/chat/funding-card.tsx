@@ -46,7 +46,8 @@ export function FundingCard({ requestId }: { requestId: string }) {
           if (tab) tab.location.href = s.widgetUrl;
           else window.open(s.widgetUrl, "_blank");
           requests.reload();
-          return { note: `Pay in the new tab${s.sandbox ? " (Circle's sandbox: test payments only)" : ""}. The USDC lands in the treasury (${shortAddr(s.destination)}).` };
+          // the amount goes to Circle with the session, but its widget may not fill it in: say how much to enter
+          return { note: `Enter ${usd(r.amountUsd)} in the new tab${s.sandbox ? " (Circle's sandbox: test payments only)" : ""}. The USDC lands in the treasury (${shortAddr(s.destination)}).` };
         } catch (e) {
           tab?.close();
           throw e;

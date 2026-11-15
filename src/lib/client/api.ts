@@ -147,11 +147,13 @@ export async function chatTurn(
   signal?: AbortSignal,
   /** context for the agent with this message only (e.g. which room it was sent in); not saved in the thread */
   note?: string,
+  /** the room this was said in: the agent answers in that room's own thread, apart from your one-to-one chat */
+  room?: string,
 ): Promise<{ finalText: string }> {
   const r = await fetch(`/api/v1/agents/${ag}/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(note ? { message, note } : { message }),
+    body: JSON.stringify({ message, ...(note ? { note } : {}), ...(room ? { room } : {}) }),
     credentials: "same-origin",
     signal,
   });

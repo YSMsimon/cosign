@@ -8,7 +8,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Bot, Hash, Info, Mic, MicOff, PaperclipIcon, PhoneOff, Plus, RefreshCw, Search, UserPlus } from "lucide-react";
-import { loader, Matrix } from "@/components/ui/matrix";
 import type { AgentState } from "@/components/ui/orb";
 import { ShimmeringText } from "@/components/ui/shimmering-text";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -24,7 +23,8 @@ import { AgentAbout } from "../../mockups/v2/agent-about";
 import { AgentList, NewAgentDialog, type Agent } from "../../mockups/v2/agents";
 import { Composer, toPicked, type Picked } from "../../mockups/v2/composer";
 import { GROK_BOT, mentionedIn, type Member } from "../../mockups/v2/mentions";
-import { AgentOrb, HUE_COLORS } from "../../mockups/v2/parts";
+import { CallWords } from "../../mockups/v2/call-words";
+import { AgentOrb } from "../../mockups/v2/parts";
 import { RoomView } from "../../mockups/v2/room-view";
 import { InviteTeammateDialog, JoinRoomDialog, ME, NewRoomDialog, RoomList } from "../../mockups/v2/rooms";
 import { useAgents as useSampleAgents, useRooms, useTeam as useSampleTeam } from "../../mockups/v2/store";
@@ -36,6 +36,7 @@ import { buildTurns, ThreadView, type LiveTurn } from "./thread-view";
 import { useChatExtras, useToolCards } from "./extras";
 import { ChatActionsContext } from "./actions";
 import { ToolCard } from "./cards";
+import { FundingCard } from "./funding-card";
 import { useRoomAsk } from "./room-ask";
 import { useRealRooms } from "./rooms-data";
 import { useVoiceCall, type Phase } from "./voice";
@@ -52,7 +53,7 @@ export function ChatView() {
   const params = useSearchParams();
   const { wsId, ws, can, address } = useCosign();
   const agentsData = useAgentsData();
-  const { rooms: savedRooms, add: addRoom, addMembers } = useRooms();
+  const { rooms: savedRooms, add: addRoom, addMembers, remove: removeRoom } = useRooms();
   const { team: sampleTeam } = useSampleTeam();
   const { agents: sampleAgents } = useSampleAgents();
   const agents = agentsData.usable;
@@ -108,6 +109,9 @@ export function ChatView() {
   const voice = useVoiceCall(agent);
   // a payment drafted by voice opens its cosign card in this call (the server says which session it came from)
   const [callDraft, setCallDraft] = useState<{ session: string; proposalId: number } | null>(null);
+  // a funding request the agent makes during the call opens its card in the call (the live feed refreshes the list)
+  const funding = useData(voice.inCall ? `funding:${wsId}` : null, () => api.fundingRequests(wsId));
+  const callFunding = (funding.data?.requests ?? []).filter((r) => r.agentId === agent?.id && !!voice.startedAt && r.createdAt >= voice.startedAt);
   useLive(
     "proposal.drafted",
     useCallback((d: Record<string, unknown>) => {
@@ -226,7 +230,15 @@ export function ChatView() {
           </div>
 
           <p className="mt-5 mb-1 px-2 text-xs font-medium text-muted-foreground">Rooms</p>
-          <RoomList rooms={rooms} selected={room?.id ?? ""} onSelect={(id) => !voice.inCall && selectRoom(id)} />
+          <RoomList
+            rooms={rooms}
+            selected={room?.id ?? ""}
+            onSelect={(id) => !voice.inCall && selectRoom(id)}
+            onDelete={(id) => {
+              removeRoom(id);
+              if (room?.id === id) router.replace(pathname); // back to your agents
+            }}
+          />
 
           <p className="mt-5 mb-1 px-2 text-xs font-medium text-muted-foreground">Agents</p>
           {agentsData.loading ? (
@@ -349,20 +361,32 @@ export function ChatView() {
               </header>
 
               {voice.inCall ? (
-                /* the call: just the agent's orb, its voice level and what was last said */
-                <div className="flex flex-1 flex-col items-center justify-center gap-6 px-8">
-                  <AgentOrb hue={agent.hue} state={orbState[voice.phase]} className="size-56 animate-in fade-in zoom-in-50 duration-700" />
-                  <ShimmeringText key={voice.statusText} text={voice.statusText} className="text-lg font-medium" repeat />
-                  <div className="flex h-16 items-center">
-                    {voice.phase === "connecting" || voice.phase === "thinking" ? (
-                      <Matrix rows={7} cols={7} frames={loader} fps={12} loop autoplay size={8} gap={3} palette={{ on: HUE_COLORS[agent.hue][0], off: "rgba(120,120,120,0.15)" }} ariaLabel="Working" />
-                    ) : (
-                      <Matrix rows={7} cols={20} mode="vu" levels={voice.levels} size={8} gap={3} palette={{ on: HUE_COLORS[agent.hue][0], off: "rgba(120,120,120,0.15)" }} ariaLabel="Voice level" />
-                    )}
-                  </div>
-                  <p className="h-10 max-w-md text-center text-sm text-muted-foreground" aria-live="polite">
-                    {voice.caption}
-                  </p>
+                /* the call: the agent's orb, then what you said, the step it is on and its words as it says them */
+                <div className="flex flex-1 flex-col items-center justify-center gap-6 overflow-y-auto px-8 py-6">
+                  <AgentOrb hue={agent.hue} state={orbState[voice.phase]} className="size-48 shrink-0 animate-in fade-in zoom-in-50 duration-700" />
+                  {voice.phase === "connecting" || voice.phase === "listening" || !(voice.asked || voice.said) ? (
+                    <ShimmeringText key={voice.statusText} text={voice.statusText} className="text-sm font-medium text-muted-foreground" repeat />
+                  ) : null}
+                  {(voice.asked || voice.said) && (
+                    <CallWords
+                      asked={voice.asked}
+                      said={voice.said}
+                      running={voice.phase === "thinking"}
+                      live={voice.phase === "talking"}
+                      step={
+                        voice.phase === "thinking"
+                          ? { title: voice.steps.length ? `Working · ${voice.steps.at(-1)}` : "Thinking…", lines: voice.steps }
+                          : voice.steps.length
+                            ? { title: `${voice.steps.at(-1)} · ${voice.steps.length} ${voice.steps.length === 1 ? "step" : "steps"}`, lines: voice.steps }
+                            : null
+                      }
+                    />
+                  )}
+                  {callFunding.map((r) => (
+                    <div key={r.id} className="w-full max-w-md">
+                      <FundingCard requestId={r.id} />
+                    </div>
+                  ))}
                   {callDraft && callDraft.session === voice.sessionId && (
                     <div className="w-full max-w-md">
                       <ToolCard agent={agent} call={{ name: "propose_payment", args: {}, result: { proposalId: String(callDraft.proposalId) }, t: new Date(0).toISOString() }} />

@@ -108,7 +108,21 @@ the API returns `{ chainId, to, data, value, description }`; the frontend sends 
 `POST /agents/:id/chat {message, note?}` streams Server-Sent Events: `step` for every loop event (Grok
 thinking, web/X searches, tool calls with arguments, results, refusals, and `text_delta` for each piece of the
 answer as Grok writes it), then `done` with the answer, token use and cost. `note` is context for the model
-with this message only (the app sends the room a message came from); it isn't saved in the thread. Each person has their own thread (`GET /agents/:id/thread`); memory is shared. The thread
+with this message only (the app sends the room a message came from); it isn't saved in the thread. `room` runs the turn
+in that room's own thread for this person (`roomThread` in `src/lib/server/chat.ts`), apart from their one-to-one chat;
+the agent's memory and files are shared across all its threads.
+
+Voice: `GET /agents/:id/voice` reports `ready` when Talk works now or will set the agent's ElevenLabs voice up on its
+first call (ElevenLabs key set and a public base known); `POST /agents/:id/voice` does that setup if needed (the same
+as `pnpm voice setup <name>`), one at a time per agent.
+
+Voice turns stream too: the custom-LLM endpoint sends ElevenLabs each whole sentence of the answer as Grok writes it
+(after any progress lines), so the voice starts on the first sentence. The ElevenLabs agents send the page
+`agent_chat_response_part` as well as their default events (`CLIENT_EVENTS` in `src/lib/server/voice.ts`). Spoken turns
+use `grok-4.20-0309-reasoning` (`VOICE_MODEL` overrides it): its first words come about 1.4 s into a warm turn and it
+still re-reads live data with its tools; the non-reasoning model was faster but answered from earlier in the
+conversation. Typed chat and background jobs use it too (`AGENT_MODEL` overrides; grok-4.3 had 66–122 s stalls). Onchain sends look for their receipt every 0.75 s (Arc's block time; viem's
+default is 4 s), and settled proposals are read from Arc once (`readProposal` in `src/lib/arc.ts`). Each person has their own thread (`GET /agents/:id/thread`); memory is shared. The thread
 returns each tool call with its arguments and its (parsed, 1,500-character) result, so the app can redraw a turn's
 cards after a reload. The frontend that reads all this is described in [frontend.md](frontend.md).
 
@@ -123,6 +137,13 @@ cards after a reload. The frontend that reads all this is described in [frontend
 - `team.message`: an agent @mentioned a teammate or a person, or a mentioned agent answered (a `team_messages` row).
 
 Events come from an in-process bus, so this needs one long-running server (not serverless functions).
+
+**Grok Bot watches the chain** (`src/lib/server/watch.ts`): every newly stored activity row goes to the watcher; a
+treasury payment executed, or USDC coming into the treasury, starts a Grok Bot job (task source `watch`) for the agent
+that drafted it, or any agent with a connected routine, to check it (the payee and invoice; or who sent the money) and
+hand anything wrong to a person or agent. Only fresh rows (the QuickNode Stream's, or Arc reads under 10 minutes old),
+one job per event, at most 6 per company per 10 minutes. The job shows in the agent's chat for everyone who sees it,
+under an "Onchain · …" line.
 
 `GET /workspaces/:ws/activity` answers from what's stored, and starts a background read of anything new on Arc for
 that treasury (its own events, and USDC moving in or out of it through Arc's system emitter), decoded with the

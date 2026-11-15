@@ -10,7 +10,7 @@ import { db, schema } from "../../src/lib/db";
 import type { AgentRow, TaskRow } from "../../src/lib/db/schema";
 import { HttpError } from "../../src/lib/server/http";
 import { encryptSecret, sha256 } from "../../src/lib/server/util";
-import { agentConfig, FILLER, lastSaid, toolPhrase, postCall, speakable, verifySignature, VOICE_NOTE, voiceLlm, voiceTaskFor, writeConfig, type VoiceRunner } from "../../src/lib/server/voice";
+import { agentConfig, FILLER, lastSaid, toolPhrase, postCall, speakable, stillTalking, verifySignature, VOICE_NOTE, voiceLlm, voiceTaskFor, writeConfig, type VoiceRunner } from "../../src/lib/server/voice";
 
 process.env.ELEVENLABS_CONFIG = join(mkdtempSync(join(tmpdir(), "cosign-voice-")), "elevenlabs.local.json");
 const SECRET = "wsec_unit_test_secret";
@@ -104,6 +104,39 @@ test("a spoken turn: our loop answers, 'One moment' first when tools run, plain 
   // a quick answer without tools: no filler
   const quick: VoiceRunner = async () => "Hi! What do you need?";
   assert.deepEqual(await read(voiceLlm(t, ask("hello", [{ role: "user", content: "What's waiting for a cosign?" }]), { run: quick, fillerAfterMs: 60_000 })), ["Hi! What do you need?"]);
+});
+
+test("the answer streams: each whole sentence goes to the voice as Grok writes it, before the turn ends, and isn't said twice", async () => {
+  const t = voiceTask();
+  let finish!: () => void;
+  const gate = new Promise<void>((ok) => (finish = ok));
+  const run: VoiceRunner = async (_t, _p, onEvent) => {
+    onEvent("model_request", { step: 1 }, 1);
+    for (const piece of ["Your wallet has $3", ".84 in USDC.", " The trea"]) onEvent("text_delta", { text: piece }, 2);
+    await gate; // Grok is still writing
+    for (const piece of ["sury has $1.50, and the **weekly** allowance is at zero", "."]) onEvent("text_delta", { text: piece }, 3);
+    return "Your wallet has $3.84 in USDC. The treasury has $1.50, and the **weekly** allowance is at zero.";
+  };
+  const res = voiceLlm(t, ask("How much money is in my wallet?"), { run, fillerAfterMs: 60_000 });
+  const reader = res.body!.getReader();
+  const first = new TextDecoder().decode((await reader.read()).value);
+  assert.match(first, /Your wallet has \$3\.84 in USDC\. /, "the first sentence is out while the turn still runs");
+  assert.doesNotMatch(first, /trea/, "half a sentence waits for the rest");
+  finish();
+  let rest = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    rest += new TextDecoder().decode(value);
+  }
+  const contents = rest.split("\n\n").filter((e) => e.startsWith("data: {")).map((e) => JSON.parse(e.slice(6)).choices[0].delta.content).filter(Boolean);
+  assert.deepEqual(contents, ["The treasury has $1.50, and the weekly allowance is at zero. "], "the rest, in plain speech, once");
+  assert.match(rest, /"finish_reason":"stop"/);
+});
+
+test("a pause is not a turn: fillers and a word or two cut off stay quiet; real questions don't", () => {
+  for (const t of ["...", "Uh-", "Um...", "uh, um", "Hmm.", "Can you-", "So-", "and"]) assert.equal(stillTalking(t), true, t);
+  for (const t of ["Can you draft ten cents to Lena?", "Yes.", "What's waiting for a cosign?", "Uh, how much is in the treasury?", "Send it to Lena-"]) assert.equal(stillTalking(t), false, t);
 });
 
 test("silence ('...') is answered without a model turn: skip_turn when offered", async () => {

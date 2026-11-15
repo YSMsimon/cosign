@@ -92,7 +92,7 @@ export function AgentSaid({ name, hue, thinking = false, tag, face, children }: 
     <Message className={ROW}>
       {/* a product icon keeps its own rounded square; MessageAvatar would clip it to a circle */}
       <MessageAvatar className={face ? `${FACE} rounded-[22%] bg-transparent` : FACE}>
-        {face ?? (thinking ? <AgentOrb hue={hue} state="thinking" className="size-8" /> : <AgentOrb hue={hue} still className="size-8" />)}
+        {face ?? (thinking ? <AgentOrb hue={hue} state="thinking" className="size-8" /> : <AgentOrb hue={hue} className="size-8" />)}
       </MessageAvatar>
       <MessageContent className="gap-2">
         <MessageHeader className={`${NAME} gap-1.5`}>

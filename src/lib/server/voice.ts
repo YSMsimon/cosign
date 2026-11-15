@@ -38,6 +38,13 @@ const now = () => new Date().toISOString();
 const VOICE_TOKEN_MIN = 30;
 const TEST_TOKEN_MIN = 120; // a dashboard test session spans several calls (pnpm voice test)
 const API = "https://api.elevenlabs.io";
+/**
+ * The model for spoken turns (2026-11-15): grok-4.20's reasoning model starts talking sooner than the default model
+ * (first words about 1.4 s into a warm turn instead of about 3 s) and still re-reads balances and proposals with its
+ * tools. The non-reasoning one was faster still but answered from earlier in the conversation (it missed a new
+ * proposal), so it isn't the default. Typed chat keeps the default model. Override with VOICE_MODEL.
+ */
+export const voiceModel = () => process.env.VOICE_MODEL || "grok-4.20-0309-reasoning";
 export const FILLER = "One moment please... "; // spoken when a turn takes 3 s with nothing said yet (tool turns speak their say_first sooner)
 const FILLER_AFTER_MS = 3000;
 
@@ -47,7 +54,9 @@ export const VOICE_NOTE = [
   "Answer in one to three short spoken sentences. No markdown, lists, headings, tables, links or emoji.",
   'Say amounts the way people say them ("two dollars forty"). Never read out a full wallet address or transaction hash: use the contact\'s name, or the last four characters.',
   "If you draft a payment, say its proposal number and that it needs a cosign; Cosign shows the cosign card by itself.",
+  "If you ask a person to add funds, say how much and that they can approve it on the screen; Cosign shows the funding card by itself.",
   "Every tool has a say_first field: one short sentence of what you are about to do, read aloud before the tool runs. Don't repeat it in your answer.",
+  "Balances, proposals, payees and limits change all the time: whenever the answer depends on them, read them with your tools in this turn. Never repeat a number from earlier in the conversation as if it were current.",
 ].join(" ");
 
 // ───────────── local config (ElevenLabs ids, encrypted webhook secret) ─────────────
@@ -99,6 +108,9 @@ const placeholders = (agent: AgentRow) => ({ agent_name: agent.name, cosign_sess
 
 export const llmUrl = (base: string) => `${base}/api/v1/voice/llm`;
 
+/** The events a call's page receives: ElevenLabs' defaults, plus agent_chat_response_part for the live caption. */
+export const CLIENT_EVENTS = ["audio", "interruption", "agent_response", "user_transcript", "agent_response_correction", "agent_tool_response", "agent_chat_response_part"];
+
 export function agentConfig(agent: AgentRow, base: string, webhookId?: string, o: { keepTestValues?: boolean } = {}) {
   return {
     name: `Cosign: ${agent.name}`,
@@ -127,6 +139,8 @@ export function agentConfig(agent: AgentRow, base: string, webhookId?: string, o
         },
       },
       ...(process.env.ELEVENLABS_VOICE_ID ? { tts: { voice_id: process.env.ELEVENLABS_VOICE_ID } } : {}),
+      // what the page hears: ElevenLabs' defaults, plus the answer's text as it is written (the call's caption)
+      conversation: { client_events: CLIENT_EVENTS },
     },
     platform_settings: {
       auth: { enable_auth: true }, // conversations start only from a signed URL we hand out
@@ -178,10 +192,30 @@ export async function clearTestValues(agent: AgentRow) {
   if (va) await setTestValues(va.elevenAgentId, placeholders(agent));
 }
 
+/** Voice can be set up on the first call: ElevenLabs is configured and we know our public address (from an earlier setup). */
+const canSetUp = (c: VoiceConfig) => !!process.env.ELEVENLABS_API_KEY && !!(c.base ?? process.env.PUBLIC_BASE_URL);
+
 export function voiceStatus(agent: AgentRow) {
   const c = readConfig();
   const va = c.agents[agent.id];
-  return { configured: !!va && !!c.webhook, elevenAgentId: va?.elevenAgentId ?? null, llm: c.base ? llmUrl(c.base) : null, webhook: c.webhook?.url ?? null };
+  const configured = !!va && !!c.webhook;
+  // ready: Talk works now, or sets this agent's voice up on the first call
+  return { configured, ready: configured || canSetUp(c), elevenAgentId: va?.elevenAgentId ?? null, llm: c.base ? llmUrl(c.base) : null, webhook: c.webhook?.url ?? null };
+}
+
+/** One setup at a time per agent (two quick Talk presses must not create two ElevenLabs agents). */
+const gSetups = globalThis as unknown as { __cosignVoiceSetups?: Map<string, Promise<unknown>> };
+const setups = (gSetups.__cosignVoiceSetups ??= new Map());
+
+/** The agent's ElevenLabs voice, set up now if it has none yet (same as `pnpm voice setup <name>`). */
+async function ensureAgentVoice(agent: AgentRow) {
+  const c = readConfig();
+  if (c.agents[agent.id] && c.webhook) return;
+  if (!canSetUp(c)) throw new HttpError(409, `voice is not set up for ${agent.name}; run: pnpm voice setup ${agent.name}`);
+  const base = (c.base ?? process.env.PUBLIC_BASE_URL!).replace(/\/$/, "");
+  const running = setups.get(agent.id) ?? setupVoice(agent, base).finally(() => setups.delete(agent.id));
+  setups.set(agent.id, running);
+  await running;
 }
 
 // ───────────── a voice session ─────────────
@@ -192,6 +226,7 @@ export function voiceStatus(agent: AgentRow) {
  * The caller has already checked that the member may use the agent.
  */
 export async function startVoice(m: Membership, agent: AgentRow, o: { signedUrl?: boolean; warm?: boolean; test?: boolean } = {}) {
+  await ensureAgentVoice(agent); // a new agent gets its voice on its first call
   const va = readConfig().agents[agent.id];
   if (!va) throw new HttpError(409, `voice is not set up for ${agent.name}; run: pnpm voice setup ${agent.name}`);
   const token = newToken();
@@ -264,7 +299,7 @@ export const runVoiceTurn: VoiceRunner = async (task, prompt, onEvent) => {
   for (let attempt = 0; ; attempt++) {
     await waitForThread(agent.ref, thread); // the person's typed turn (or an earlier spoken one) finishes first
     try {
-      const r = await runTurn(agent, ws, actor, thread, prompt, onEvent, task.id, { turnNote: VOICE_NOTE, via: "voice" });
+      const r = await runTurn(agent, ws, actor, thread, prompt, onEvent, task.id, { turnNote: VOICE_NOTE, via: "voice", stream: true, model: voiceModel() });
       return r.finalText;
     } catch (e) {
       if (e instanceof HttpError && e.status === 409 && attempt < 2) continue; // another turn slipped in first
@@ -274,7 +309,8 @@ export const runVoiceTurn: VoiceRunner = async (task, prompt, onEvent) => {
 };
 
 type Said = { text: string; n: number }; // the newest thing the person said, and how many times they've spoken
-type Update = { text: string; canned: boolean }; // a progress line: Grok's own say_first, or our canned fallback
+/** Something to say during a turn: a progress line (Grok's own say_first, or our canned one), or a sentence of the answer. */
+type Update = { text: string; canned: boolean; answer?: boolean };
 type Turn = { said: Said; updates: Update[]; subs: Set<() => void>; result: Promise<string> };
 
 /**
@@ -378,9 +414,25 @@ function turnFor(task: TaskRow, said: Said, run: VoiceRunner): { turn: Turn } | 
   const name = db().select({ name: schema.agents.name }).from(schema.agents).where(eq(schema.agents.id, task.agentId)).get()?.name ?? "agent";
   const turn: Turn = { said, updates: [], subs: new Set(), result: Promise.resolve("") };
   const progress = (text: string, canned: boolean) => {
-    if (!text || turn.updates.some((u) => u.text === text) || turn.updates.length >= MAX_UPDATES) return;
+    if (!text || turn.updates.some((u) => u.text === text) || turn.updates.filter((u) => !u.answer).length >= MAX_UPDATES) return;
     turn.updates.push({ text, canned });
     for (const f of turn.subs) f();
+  };
+  // the answer as Grok writes it, said a whole sentence at a time (so "$3.84" or an address is never cut in two):
+  // the voice starts on the first sentence instead of waiting for the whole turn
+  let pending = "";
+  const answer = (all: boolean) => {
+    for (;;) {
+      const m = all ? /^[\s\S]*\S[\s\S]*$/.exec(pending) : /^[\s\S]*?(?:[.!?](?=\s)|\n)/.exec(pending);
+      if (!m) return;
+      pending = pending.slice(m[0].length);
+      const text = speakable(m[0]);
+      if (text) {
+        turn.updates.push({ text, canned: false, answer: true });
+        for (const f of turn.subs) f();
+      }
+      if (all) return;
+    }
   };
   turn.result = (async () => {
     const t0 = Date.now();
@@ -391,6 +443,12 @@ function turnFor(task: TaskRow, said: Said, run: VoiceRunner): { turn: Turn } | 
     addProgress(task.id, `person: ${said.text.slice(0, 500)}`);
     try {
       const text = await run(task, said.text, (type, data) => {
+        if (type === "text_delta") {
+          pending += String(data.text ?? "");
+          answer(false);
+          return;
+        }
+        if (type === "model_request") answer(true); // words written before a tool call are said before it runs
         if (type === "tool_call" || type === "server_tool") {
           tFirst ||= Date.now();
           tools.push(String(data.tool));
@@ -400,11 +458,13 @@ function turnFor(task: TaskRow, said: Said, run: VoiceRunner): { turn: Turn } | 
           progress(own || toolPhrase(String(data.tool), (data.args as Record<string, unknown>) ?? {}), !own);
         }
         if (type === "server_tool") progress(toolPhrase(String(data.tool)), true);
-        if (type === "tool_call") addProgress(task.id, `called ${data.tool}`);
+        // with its arguments, so the call's step line can say what it did ("Drafted $0.10 to Lena", not "Drafted to")
+        if (type === "tool_call") addProgress(task.id, `called ${data.tool} ${JSON.stringify(data.args ?? {})}`.slice(0, 600));
         else if (type === "policy_refused") addProgress(task.id, `${data.tool} refused: ${data.reason}`);
         else if (type === "tool_error") addProgress(task.id, `${data.tool} failed: ${data.error}`);
         else if (type === "server_tool") addProgress(task.id, `searched (${String(data.tool).replace(/_call$/, "")}): ${data.query ?? ""}`);
       });
+      answer(true); // the last words of the answer
       answered.set(task.id, { said, reply: text, at: Date.now() });
       addProgress(task.id, `${name}: ${text.slice(0, 800)}`);
       const end = Date.now();
@@ -446,6 +506,18 @@ export function speakable(md: string): string {
 }
 
 /**
+ * Is this a pause, not a turn? ElevenLabs sends "..." when the person goes quiet, and sometimes a fragment when they
+ * pause mid-sentence ("Uh-", "Um...", "Can you-"): answering cuts them off, so we stay quiet and let them finish.
+ */
+export function stillTalking(text: string): boolean {
+  const t = text.trim();
+  if (/^[\s.…]*$/.test(t)) return true;
+  const words = t.toLowerCase().replace(/[.…,!?]/g, " ").split(/\s+/).filter(Boolean);
+  if (words.every((w) => /^(uh+|um+|hmm+|mm+|er+|ah+|eh|oh|so|and|but|like|well)-?$/.test(w))) return true;
+  return /-$/.test(t) && words.length <= 3; // cut off after a word or two
+}
+
+/**
  * One custom-LLM request from ElevenLabs: answer the newest thing the person said with the Cosign loop,
  * streamed in the OpenAI Chat Completions chunk format. Errors are spoken, so the call carries on.
  */
@@ -458,7 +530,7 @@ export function voiceLlm(task: TaskRow, body: unknown, o: { signal?: AbortSignal
   // ElevenLabs sends "..." when the person goes quiet: no model turn, nothing in the thread; stay silent (skip_turn) when offered
   const tools = (body as { tools?: { function?: { name?: string } }[] }).tools;
   const canSkip = Array.isArray(tools) && tools.some((t) => t?.function?.name === "skip_turn");
-  const silent = !!said && /^[\s.…]+$/.test(said.text);
+  const silent = !!said && stillTalking(said.text);
   const src = !said ? null : silent ? (canSkip ? { skip: true as const } : { cached: "I'm here." }) : turnFor(task, said, o.run ?? runVoiceTurn);
 
   const enc = new TextEncoder();
@@ -512,6 +584,7 @@ export function voiceLlm(task: TaskRow, body: unknown, o: { signal?: AbortSignal
             anything = true;
           }
         };
+        const streamed = () => t.updates.some((u) => u.answer);
         const timer = setTimeout(() => {
           if (anything) return;
           anything = true;
@@ -523,14 +596,16 @@ export function voiceLlm(task: TaskRow, body: unknown, o: { signal?: AbortSignal
         };
         t.subs.add(speakProgress);
         speakProgress(); // a retry that joins a running turn catches up
-        let reply: string;
+        let reply: string | null;
         try {
-          reply = speakable(await t.result) || "Done.";
+          const text = await t.result;
+          speakProgress();
+          reply = streamed() ? null : speakable(text) || "Done."; // already said sentence by sentence
         } catch {
           reply = "Sorry, something went wrong on my side. Please try again.";
         }
         cleanup();
-        say(reply);
+        if (reply) say(reply);
       }
       write(chunk({}, "stop"));
       write("data: [DONE]\n\n");

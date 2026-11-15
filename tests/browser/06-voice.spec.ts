@@ -48,6 +48,18 @@ test("voice: a real ElevenLabs call with the agent; the spoken turn is answered 
   await expect(page.getByText("In a call")).toBeVisible();
   await expect(page.getByText(/Hi, it.s Clerk/)).toBeVisible({ timeout: 60_000 });
 
+  // what you said shows over the agent's words (the call's caption); PEEK_DIR saves a frame a second to look at
+  const peek = process.env.PEEK_DIR;
+  const frames = peek
+    ? (async () => {
+        for (let i = 0; i < 30 && !page.isClosed(); i++) {
+          await page.screenshot({ path: `${peek}/call-${String(i).padStart(2, "0")}.png` }).catch(() => {});
+          await page.waitForTimeout(1000);
+        }
+      })()
+    : Promise.resolve();
+  await expect(page.getByText(/^You · /)).toBeVisible({ timeout: 90_000 });
+
   // the question from the microphone becomes a spoken turn in your thread, answered by the same agent
   await expect
     .poll(
@@ -60,6 +72,7 @@ test("voice: a real ElevenLabs call with the agent; the spoken turn is answered 
     )
     .toBe(true);
 
+  await frames;
   // End call: back to the conversation, where the spoken turns carry the Voice tag
   await page.getByRole("button", { name: "End call" }).click();
   await expect(page.getByPlaceholder("Message Clerk")).toBeVisible();

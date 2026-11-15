@@ -55,14 +55,14 @@ export async function runTurn(
   prompt: string,
   onEvent?: RunEventHandler,
   taskId?: string | null,
-  o: { turnNote?: string; via?: "voice"; stream?: boolean } = {},
+  o: { turnNote?: string; via?: "voice"; stream?: boolean; model?: string } = {},
 ) {
   const key = `${agent.ref}:${thread}`;
   if (locks.has(key)) throw conflict("this conversation is already running a turn; wait for it to finish");
   locks.add(key);
   try {
     const { ctx, instructions } = await runContext(agent, ws, actor, { taskId });
-    return await runAgentTurn({ ctx, instructions, prompt, thread, quiet: true, onEvent, turnNote: o.turnNote, via: o.via, stream: o.stream });
+    return await runAgentTurn({ ctx, instructions, prompt, thread, quiet: true, onEvent, turnNote: o.turnNote, via: o.via, stream: o.stream, model: o.model });
   } finally {
     locks.delete(key);
   }
@@ -79,6 +79,12 @@ export async function waitForThread(agentRef: string, thread: string, timeoutMs 
 }
 
 export const memberThread = (memberId: string) => `m-${memberId.replace(/[^a-z0-9_-]/gi, "").toLowerCase()}`;
+
+/**
+ * A person's conversation with an agent inside a room: its own context, apart from their one-to-one chat, while the
+ * agent's memory and files stay shared (Simon, 2026-11-15).
+ */
+export const roomThread = (memberId: string, room: string) => `${memberThread(memberId)}-r-${room.toLowerCase().replace(/[^a-z0-9_-]/g, "")}`.slice(0, 61);
 
 export function requireUse(m: Membership, agent: AgentRow) {
   if (!canUseAgent(accessOf(agent), memberAccess(m))) {

@@ -185,7 +185,7 @@ export async function sendPrepared(tx: PreparedTx, me: string, step?: (i: number
     value: BigInt(tx.value),
   });
   step?.(2);
-  const receipt = await reader.waitForTransactionReceipt({ hash, timeout: 120_000 });
+  const receipt = await reader.waitForTransactionReceipt({ hash, timeout: 120_000, pollingInterval: 750 }); // about Arc's block time
   if (receipt.status !== "success") throw new Error(`The transaction failed on Arc (${shortAddr(hash)}).`);
   return hash;
 }

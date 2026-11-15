@@ -63,7 +63,7 @@ export function SessionView() {
   const pathname = usePathname();
   const { agents, add, remove } = useAgents();
   const { lines, say } = useLines();
-  const { rooms, add: addRoom, addMembers } = useRooms();
+  const { rooms, add: addRoom, addMembers, remove: removeRoom } = useRooms();
   const { team, invite } = useTeam();
   const params = useSearchParams();
   const wanted = params.get("agent");
@@ -230,7 +230,15 @@ export function SessionView() {
           </div>
 
           <p className="mt-5 mb-1 px-2 text-xs font-medium text-muted-foreground">Rooms</p>
-          <RoomList rooms={rooms} selected={room?.id ?? ""} onSelect={(id) => !inCall && selectRoom(id)} />
+          <RoomList
+            rooms={rooms}
+            selected={room?.id ?? ""}
+            onSelect={(id) => !inCall && selectRoom(id)}
+            onDelete={(id) => {
+              removeRoom(id);
+              if (room?.id === id) router.replace(pathname);
+            }}
+          />
 
           <p className="mt-5 mb-1 px-2 text-xs font-medium text-muted-foreground">Agents</p>
           <AgentList agents={agents} selected={room ? "" : (agent?.id ?? "")} onSelect={(id) => !inCall && select(id)} onDelete={deleteAgent} />
@@ -320,7 +328,7 @@ export function SessionView() {
                             <MessageScrollerItem messageId="s2">
                               <Message className="gap-3">
                                 <MessageAvatar className="self-start">
-                                  <AgentOrb hue={agent.hue} still className="size-8" />
+                                  <AgentOrb hue={agent.hue} className="size-8" />
                                 </MessageAvatar>
                                 <MessageContent className="gap-3">
                                   <Steps
@@ -349,7 +357,7 @@ export function SessionView() {
                             <MessageScrollerItem messageId="s4">
                               <Message className="gap-3">
                                 <MessageAvatar className="self-start">
-                                  <AgentOrb hue={agent.hue} still className="size-8" />
+                                  <AgentOrb hue={agent.hue} className="size-8" />
                                 </MessageAvatar>
                                 <MessageContent className="gap-3">
                                   <Steps title="Found a credit report API on QuickNode · $0.10" steps={[]} />
@@ -371,7 +379,7 @@ export function SessionView() {
                             <MessageScrollerItem messageId="s6">
                               <Message className="gap-3">
                                 <MessageAvatar className="self-start">
-                                  <AgentOrb hue={agent.hue} still className="size-8" />
+                                  <AgentOrb hue={agent.hue} className="size-8" />
                                 </MessageAvatar>
                                 <MessageContent className="gap-3">
                                   <Words>
@@ -393,7 +401,7 @@ export function SessionView() {
                             ) : (
                               <Message className="gap-3">
                                 <MessageAvatar className="self-start">
-                                  <AgentOrb hue={agent.hue} still className="size-8" />
+                                  <AgentOrb hue={agent.hue} className="size-8" />
                                 </MessageAvatar>
                                 <MessageContent>
                                   {l.via === "voice" && (

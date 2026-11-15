@@ -91,7 +91,7 @@ export function AgentsPanel({ picked, onPick }: { picked: string | null; onPick:
         <TabsList variant="line">
           {agents.map((x) => (
             <TabsTrigger key={x.id} value={x.id}>
-              <AgentOrb hue={x.hue} still className="size-4" />
+              <AgentOrb hue={x.hue} className="size-4" />
               {x.name}
             </TabsTrigger>
           ))}

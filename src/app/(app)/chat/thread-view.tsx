@@ -70,7 +70,7 @@ const MONEY = new Set(["paid_fetch", "propose_payment", "request_topup", "send_u
 function AgentFace({ agent, thinking = false }: { agent: Agent; thinking?: boolean }) {
   return (
     <MessageAvatar className="self-start">
-      {thinking ? <AgentOrb hue={agent.hue} state="thinking" className="size-8" /> : <AgentOrb hue={agent.hue} still className="size-8" />}
+      {thinking ? <AgentOrb hue={agent.hue} state="thinking" className="size-8" /> : <AgentOrb hue={agent.hue} className="size-8" />}
     </MessageAvatar>
   );
 }
@@ -115,6 +115,11 @@ export function ThreadView({
     ...turns.map((turn) => ({ key: turn.key, t: turn.t, anchor: turn.kind === "you", node: <TurnView turn={turn} agent={agent} members={members} cards={cards} /> })),
     ...extras.map((x) => ({ key: x.key, t: x.t, anchor: false, node: x.node })),
   ].sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
+  // only your latest message is a scroll anchor: the scroller jumps to the first anchor it hasn't handled when the list
+  // changes without growing (the live turn swapped for the saved one), and with every message an anchor that was your
+  // oldest one, far up the conversation
+  const lastYou = live ? -1 : items.findLastIndex((it) => it.anchor);
+  items.forEach((it, i) => (it.anchor = i === lastYou));
 
   return (
     <div className="min-h-0 flex-1">

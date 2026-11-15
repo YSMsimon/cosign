@@ -37,6 +37,8 @@ export const arcTestnet = defineChain({
 export const USDC = (process.env.USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000") as Address;
 export const USDC_DECIMALS = 6;
 export const explorerTx = (h: string) => `${arcTestnet.blockExplorers.default.url}/tx/${h}`;
+/** How often to look for a receipt: about Arc's block time (viem's default is 4 s, which a voice turn hears as silence). */
+export const RECEIPT_POLL_MS = 750;
 export const explorerAddr = (a: string) => `${arcTestnet.blockExplorers.default.url}/address/${a}`;
 
 // Arc confirms in well under a second; viem's default 4 s polling made every transaction wait up to 4 s extra.
@@ -102,6 +104,19 @@ export async function usdcBalance(addr: Address) {
 
 const FEE = { type: "level", config: { feeLevel: "MEDIUM" } } as const;
 
+/** The treasury contract's errors by selector, in words (a revert names one of these). */
+const TREASURY_ERRORS: Record<string, string> = {
+  "0xf4d678b8": "InsufficientBalance (the treasury has too little USDC)",
+  "0x6015fb13": "AllowanceExceeded (over the weekly petty-cash allowance)",
+  "0x2bb9acf7": "BadInput",
+  "0x1309a563": "IsPaused (the treasury is paused)",
+  "0x65f84cc0": "NotApprover",
+  "0x7d1b73b9": "NotProposer (this wallet may not draft)",
+  "0x1446e503": "ProposalClosed (already executed or cancelled)",
+  "0x101f817a": "AlreadyApproved",
+  "0x5d5d3ca0": "UnknownProposal",
+};
+
 /** Send a contract call from one of our Circle wallets and wait for it to be mined. */
 export async function callFrom<const A extends Abi>(
   refId: string,
@@ -127,14 +142,18 @@ export async function callFrom<const A extends Abi>(
       // Circle can estimate gas on a node a block or two behind ours, so a call that depends on the
       // previous tx (approve right after propose) reverts in estimation. Nothing was broadcast, so
       // retrying is safe. Seen 2026-11-13: approve → UnknownProposal() one block after propose.
-      if (attempt < 3 && /ESTIMATION_ERROR/.test(String((e as Error)?.message ?? e))) {
+      // A definite refusal (too little in the treasury, over the allowance, not allowed) fails at once, named.
+      const msg = String((e as Error)?.message ?? e);
+      const known = Object.entries(TREASURY_ERRORS).find(([sel]) => msg.includes(sel));
+      if (known && known[0] !== "0x5d5d3ca0") throw new Error(`${functionName} was refused by the treasury: ${known[1]}`);
+      if (attempt < 3 && /ESTIMATION_ERROR/.test(msg)) {
         await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
         continue;
       }
       throw e;
     }
   }
-  const receipt = await chain.waitForTransactionReceipt({ hash });
+  const receipt = await chain.waitForTransactionReceipt({ hash, pollingInterval: RECEIPT_POLL_MS });
   if (receipt.status !== "success") throw new Error(`${functionName} reverted: ${explorerTx(hash)}`);
   return { hash, receipt };
 }
@@ -154,11 +173,25 @@ export async function sendUsdc(refId: string, to: Address, amount: string) {
   });
   const done = await circle().getTransaction({ id: tx.data!.id!, waitForTxHash: true });
   const hash = done.data!.transaction!.txHash as Hash;
-  await chain.waitForTransactionReceipt({ hash });
+  await chain.waitForTransactionReceipt({ hash, pollingInterval: RECEIPT_POLL_MS });
   return hash;
 }
 
 // ─────────────── treasury helpers (what the agent tools will call) ───────────────
+
+export type ChainProposal = { kind: number; to: string; amount: bigint; newThreshold: number; proposer: string; createdAt: bigint; approvals: number; executed: boolean; cancelled: boolean; memo: string };
+const gp = globalThis as unknown as { __cosignFinalProposals?: Map<string, ChainProposal> };
+const finals = (gp.__cosignFinalProposals ??= new Map());
+
+/** One proposal from the treasury. Executed and cancelled ones never change again, so each is read from Arc once. */
+export async function readProposal(treasury: Address, pid: bigint): Promise<ChainProposal> {
+  const key = `${treasury.toLowerCase()}:${pid}`;
+  const hit = finals.get(key);
+  if (hit) return hit;
+  const p = (await chain.readContract({ address: treasury, abi: companyTreasuryAbi, functionName: "getProposal", args: [pid] })) as ChainProposal;
+  if (p.executed || p.cancelled) finals.set(key, p);
+  return p;
+}
 
 export async function createCompany(
   creatorRef: string,

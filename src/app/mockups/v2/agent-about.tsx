@@ -40,7 +40,7 @@ export function AgentAbout({ agent, onClose, info }: { agent: Agent; onClose: ()
   return (
     <aside className="flex w-80 shrink-0 flex-col gap-5 overflow-auto border-l border-border p-5" aria-label={`About ${agent.name}`}>
       <UserRow
-        avatar={<AgentOrb hue={agent.hue} still className="size-9" />}
+        avatar={<AgentOrb hue={agent.hue} className="size-9" />}
         label={agent.name}
         sublabel={agent.job}
         action={

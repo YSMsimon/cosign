@@ -5,7 +5,7 @@
  */
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { formatUnits, isAddress, zeroAddress, type Address } from "viem";
-import { approversOf, chain } from "../arc";
+import { approversOf, chain, readProposal } from "../arc";
 import { companyTreasuryAbi } from "../contracts/abis";
 import { db, schema } from "../db";
 import type { ActivityRow, AgentRow } from "../db/schema";
@@ -16,19 +16,7 @@ import { canSeeAgent } from "../perm/permissions";
 import { badRequest, conflict, forbidden, notFound, prepare } from "./http";
 
 const KINDS = ["payment", "add_approver", "remove_approver", "set_threshold"] as const;
-type ChainProposal = { kind: number; to: string; amount: bigint; newThreshold: number; proposer: string; createdAt: bigint; approvals: number; executed: boolean; cancelled: boolean; memo: string };
-
-/** Executed and cancelled proposals never change again: read each once (the ledger otherwise re-reads every one). */
-const g = globalThis as unknown as { __cosignFinalProposals?: Map<string, ChainProposal> };
-const finals = (g.__cosignFinalProposals ??= new Map());
-async function readProposal(treasury: Address, pid: bigint) {
-  const key = `${treasury.toLowerCase()}:${pid}`;
-  const hit = finals.get(key);
-  if (hit) return hit;
-  const p = (await chain.readContract({ address: treasury, abi: companyTreasuryAbi, functionName: "getProposal", args: [pid] })) as ChainProposal;
-  if (p.executed || p.cancelled) finals.set(key, p);
-  return p;
-}
+// settled proposals are read from Arc once (readProposal in ../arc caches them)
 
 export async function listProposals(m: Membership, o: { status?: "open" | "all" } = {}) {
   const t = m.workspace.treasury as Address;

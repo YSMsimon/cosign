@@ -18,7 +18,7 @@ async function proposalWith(page: Page, ws: string, memo: string) {
   let id: number | undefined;
   await expect
     .poll(async () => {
-      id = (await pageApi<Proposals>(page, "GET", `/workspaces/${ws}/proposals`)).json.proposals.find((p) => p.memo.includes(memo))?.id;
+      id = (await pageApi<Proposals>(page, "GET", `/workspaces/${ws}/proposals`)).json.proposals?.find((p) => p.memo.includes(memo))?.id;
       return id ?? null;
     }, { timeout: 120_000 })
     .not.toBeNull();
@@ -35,6 +35,12 @@ test("treasury approval: OK a purchase over the line, cosign a drafted payment i
 
   // 1. a send over the Clerk's $0.01 ask-a-person line waits for a person; Approve tells it to try again, and it goes through
   const tag = Date.now();
+  // a long-lived test conversation: deny requests earlier runs left open, and remember the ones that exist, so this
+  // run's card and request are the ones it checks
+  const before = (await pageApi<Approvals>(page, "GET", `/workspaces/${s.ws}/approvals?status=all`)).json.approvals ?? [];
+  for (const a of before.filter((x) => x.status === "pending")) await pageApi(page, "POST", `/workspaces/${s.ws}/approvals/${a.id}`, { decision: "deny" });
+  const old = new Set(before.map((a) => a.id));
+  await page.reload();
   await ask(page, `Send $0.02 USDC from your own wallet to Lena (the saved payee ${s.lena}), memo 'browser approval ${tag}'. Use send_usdc.`);
   const purchase = page.getByRole("alert").filter({ hasText: `Let Clerk send $0.02 to ${lena}` }).last();
   await expect(purchase).toBeVisible({ timeout: 120_000 });
@@ -43,7 +49,7 @@ test("treasury approval: OK a purchase over the line, cosign a drafted payment i
   await expect
     .poll(async () => {
       const r = await pageApi<Approvals>(page, "GET", `/workspaces/${s.ws}/approvals?status=all`);
-      return r.json.approvals.find((a) => a.url === `send:${s.lena}`)?.status ?? null;
+      return r.json.approvals?.find((a) => a.url === `send:${s.lena}` && !old.has(a.id))?.status ?? null;
     }, { timeout: 180_000, message: "the approved send is used by the agent's retry" })
     .toBe("used");
 
@@ -60,7 +66,7 @@ test("treasury approval: OK a purchase over the line, cosign a drafted payment i
   await expect(paid).toHaveCount(paidBefore + 1, { timeout: 150_000 });
   expect(walletCalls.filter((c) => c.method === "eth_sendTransaction").length).toBe(sendsBefore + 1);
   const p1 = await pageApi<Proposals>(page, "GET", `/workspaces/${s.ws}/proposals`);
-  expect(p1.json.proposals.find((p) => p.memo.includes(`browser cosign ${tag}`))?.status).toBe("executed");
+  expect(p1.json.proposals?.find((p) => p.memo.includes(`browser cosign ${tag}`))?.status).toBe("executed");
 
   // 3. another draft, denied: the wallet signs the cancel; nothing is paid
   await ask(page, `Draft another $0.01 treasury payment to Lena (${s.lena}) with memo 'browser cancel ${tag}'. Use propose_payment.`);
@@ -72,5 +78,5 @@ test("treasury approval: OK a purchase over the line, cosign a drafted payment i
   await second.getByRole("button", { name: "Deny" }).click();
   await expect(cancelled).toHaveCount(cancelledBefore + 1, { timeout: 150_000 });
   const p2 = await pageApi<Proposals>(page, "GET", `/workspaces/${s.ws}/proposals`);
-  expect(p2.json.proposals.find((p) => p.memo.includes(`browser cancel ${tag}`))?.status).toBe("cancelled");
+  expect(p2.json.proposals?.find((p) => p.memo.includes(`browser cancel ${tag}`))?.status).toBe("cancelled");
 });

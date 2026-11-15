@@ -6,7 +6,7 @@
  * Server-only.
  */
 import type { Address } from "viem";
-import { availableAllowance, chain, findWallet, fmt, proposePayment, topUpAgent, treasuryState, usdcBalance, wallet, wallets } from "../arc";
+import { availableAllowance, chain, findWallet, fmt, proposePayment, readProposal, topUpAgent, treasuryState, usdcBalance, wallet } from "../arc";
 import { companyTreasuryAbi } from "../contracts/abis";
 import { editFile, listDir, readFile, sandboxExec, writeFile } from "../sandbox";
 import { NeedsApproval, paidFetch, PolicyRefusal } from "../x402/buyer";
@@ -14,7 +14,7 @@ import { discoverServices } from "../x402/discovery";
 import { gatewayBalance } from "../x402/gateway";
 import { beforePurchase, checkLimits, moneyRefusal, payeesOf, recordProposal, recordSpend, type RunScope } from "./controls";
 import { MAX_NOTE_CHARS, memoryArchive, memoryRead, memorySearch, memoryWrite } from "./memory";
-import { normalizeSeller, rulesFromPolicy, sellerAllowed, type Abilities, type AgentRules } from "./rules";
+import { moneyLive, normalizeSeller, rulesFromPolicy, sellerAllowed, type Abilities, type AgentRules } from "./rules";
 
 export type AgentPolicy = {
   maxPerCallUsd: number; // x402 per-request cap
@@ -131,7 +131,7 @@ export const TOOLS: ToolDef[] = [
     description: "Your wallet USDC, your Gateway (nanopayment) balance, your remaining weekly petty-cash allowance, and the company treasury state.",
     parameters: obj({}),
     run: async (c) => {
-      const w = wallets().find((x) => x.refId === c.agentRef);
+      const w = findWallet(c.agentRef); // the seeded wallets file, or the wallet an agent made in the app keeps in the database
       // a read-only agent may have no wallet: it still sees the treasury
       if (!w) return { wallet: null, treasury: { address: c.treasury, ...(await treasuryState(c.treasury)), proposalCount: undefined } };
       return {
@@ -149,7 +149,7 @@ export const TOOLS: ToolDef[] = [
     description:
       "The company treasury's payment proposals, newest first: number, payee, amount, memo, cosigns so far and status. " +
       "Use it to answer what is waiting for a cosign. Only humans cosign, from their own wallets.",
-    parameters: obj({ status: str("'open' (default) or 'all'") }),
+    parameters: obj({ status: str("'open' (default) or 'all': use 'all' whenever the person asks about paid, cancelled, past or all proposals") }),
     run: async (c, a) => {
       const t = c.treasury;
       const [count, threshold] = await Promise.all([
@@ -160,9 +160,7 @@ export const TOOLS: ToolDef[] = [
       const kinds = ["payment", "add_approver", "remove_approver", "set_threshold"];
       const out = [];
       for (let i = Number(count) - 1; i >= 0 && i >= Number(count) - 25 && out.length < 10; i--) {
-        const p = (await chain.readContract({ address: t, abi: companyTreasuryAbi, functionName: "getProposal", args: [BigInt(i)] })) as {
-          kind: number; to: string; amount: bigint; approvals: number; executed: boolean; cancelled: boolean; memo: string;
-        };
+        const p = await readProposal(t, BigInt(i)); // settled ones come from the cache
         const status = p.executed ? "executed" : p.cancelled ? "cancelled" : "open";
         if (!all && status !== "open") continue;
         out.push({ id: i, kind: kinds[p.kind] ?? "unknown", to: p.to.toLowerCase(), amountUsd: p.kind === 0 ? fmt(p.amount) : null, memo: p.memo, cosigns: `${p.approvals} of ${threshold}`, status });
@@ -186,6 +184,8 @@ export const TOOLS: ToolDef[] = [
       if (which === "sellers" || which === "vendors" || which === "all")
         out.sellers = r.abilities.buy ? await sellersOf(r.controls.allowedSellers) : "paid APIs are off for you (no buy ability, or not for this person)";
       if (!Object.keys(out).length) throw new Error("list must be 'payees', 'sellers' or 'all'");
+      // frozen or past its end date: the money tools are gone; say why, so the agent tells the person instead of looking
+      if (!moneyLive(r.controls)) out.moneyAbilities = r.controls.frozen ? "frozen: a person froze your money abilities; you can't pay, draft or refill until they unfreeze you" : "ended: your money abilities are past their end date";
       return out;
     },
   },
@@ -305,9 +305,11 @@ export const TOOLS: ToolDef[] = [
     run: async (c, a) => {
       // the contract enforces the weekly allowance; read it first so a draw it would refuse answers at once,
       // in plain words (Circle reports the revert as an estimation error, which callFrom retries for ~9 s)
-      const left = Number(await availableAllowance(c.treasury, wallet(c.agentRef).address));
+      const [left, inTreasury] = await Promise.all([availableAllowance(c.treasury, wallet(c.agentRef).address).then(Number), usdcBalance(c.treasury).then((b) => Number(fmt(b)))]);
       if (Number(a.amount_usd) > left + 1e-9)
         return { refused: true, reason: `this week's petty cash is used up: $${left} of the weekly allowance is left; it renews when the treasury's period resets` };
+      if (Number(a.amount_usd) > inTreasury + 1e-9)
+        return { refused: true, reason: `the treasury has only $${inTreasury}: ask a person to add funds (request_funds) before refilling` };
       const res = await topUpAgent(c.agentRef, c.treasury, String(a.amount_usd));
       recordSpend(c.scope, "topup", Number(a.amount_usd), res.hash);
       return { tx: res.hash };

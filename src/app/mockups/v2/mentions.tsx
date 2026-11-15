@@ -51,7 +51,7 @@ export const mentionedIn = (text: string, members: Member[]) =>
 export function MemberFace({ m, className = "size-6" }: { m: Member; className?: string }) {
   if (m.image) return <BrandFace src={m.image} name={m.name} className={className} />;
   return m.kind === "agent" ? (
-    <AgentOrb hue={m.hue ?? "blue"} still className={className} />
+    <AgentOrb hue={m.hue ?? "blue"} className={className} />
   ) : (
     /* default size, so `className` sets it (the sm size's data selector would win over it) */
     <Avatar className={className}>
