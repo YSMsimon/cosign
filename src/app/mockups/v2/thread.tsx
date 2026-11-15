@@ -5,8 +5,10 @@ import { Attachment, AttachmentContent, AttachmentGroup, AttachmentMedia, Attach
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message, MessageAvatar, MessageContent, MessageHeader } from "@/components/ui/message";
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Tag } from "@/components/ui/tag";
 import type { OrbHue } from "@/components/orb-avatar";
+import { BrandFace, GROK_BOT } from "./mentions";
 import { AgentOrb } from "./parts";
 import type { Line } from "./store";
 
@@ -85,16 +87,39 @@ export function PersonSaid({ name, initials, line, children }: { name: string; i
 }
 
 /** An agent's turn in a room: its orb and name over whatever it shows (steps, words, an approval). */
-export function AgentSaid({ name, hue, thinking = false, children }: { name: string; hue: OrbHue; thinking?: boolean; children: React.ReactNode }) {
+export function AgentSaid({ name, hue, thinking = false, tag, face, children }: { name: string; hue: OrbHue; thinking?: boolean; tag?: React.ReactNode; face?: React.ReactNode; children: React.ReactNode }) {
   return (
     <Message className={ROW}>
-      <MessageAvatar className={FACE}>
-        {thinking ? <AgentOrb hue={hue} state="thinking" className="size-8" /> : <AgentOrb hue={hue} still className="size-8" />}
+      {/* a product icon keeps its own rounded square; MessageAvatar would clip it to a circle */}
+      <MessageAvatar className={face ? `${FACE} rounded-[22%] bg-transparent` : FACE}>
+        {face ?? (thinking ? <AgentOrb hue={hue} state="thinking" className="size-8" /> : <AgentOrb hue={hue} still className="size-8" />)}
       </MessageAvatar>
       <MessageContent className="gap-2">
-        <MessageHeader className={NAME}>{name}</MessageHeader>
+        <MessageHeader className={`${NAME} gap-1.5`}>
+          {name}
+          {tag}
+        </MessageHeader>
         {children}
       </MessageContent>
     </Message>
+  );
+}
+
+/** Grok Bot's turn: the same agent row with its own app icon, tagged so everyone sees it ran in the background. */
+export function GrokSaid({ children }: { children: React.ReactNode }) {
+  return (
+    <AgentSaid name={GROK_BOT.name} hue="orange" face={<BrandFace src={GROK_BOT.image!} name={GROK_BOT.name} className="size-8" />} tag={<Tag size="sm" variant="secondary">{GROK_BOT.badge}</Tag>}>
+      {children}
+    </AgentSaid>
+  );
+}
+
+/** A line from Cosign itself between messages, e.g. "Friday 9:00 · Grok Bot started the run" (shadcn Marker). */
+export function ChainEvent({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <Marker variant="separator">
+      <MarkerIcon>{icon}</MarkerIcon>
+      <MarkerContent>{children}</MarkerContent>
+    </Marker>
   );
 }

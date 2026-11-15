@@ -1,11 +1,12 @@
 "use client";
 
 import { Fragment } from "react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tag } from "@/components/ui/tag";
 import type { OrbHue } from "@/components/orb-avatar";
+import { cn } from "@/lib/utils";
 import type { Agent } from "./agents";
 import { AddressLine, LENA, personAddress, walletOf } from "./money";
 import { AgentOrb } from "./parts";
@@ -13,15 +14,31 @@ import type { Room, Teammate } from "./store";
 
 /** Someone you can @: an agent or a teammate. */
 /** `address` is the person's wallet, or the agent's own wallet. */
-export type Member = { id: string; name: string; kind: "agent" | "person"; sub: string; address: string; hue?: OrbHue; initials?: string };
+/** `image` = a connected product's own icon (Grok Bot); `badge` replaces "Agent" in the @ list and the card. */
+export type Member = { id: string; name: string; kind: "agent" | "person"; sub: string; address: string; hue?: OrbHue; initials?: string; image?: string; badge?: string };
 
 export const agentMember = (a: Agent): Member => ({ id: a.id, name: a.name, kind: "agent", sub: a.job, address: walletOf(a.id).address, hue: a.hue });
 export const personMember = (t: Teammate): Member => ({ id: t.id, name: t.name, kind: "person", sub: t.role, address: t.address ?? personAddress(t.id), initials: t.initials });
 
-/** Everyone in a room you could @ (not yourself): agents first, then people. */
+/**
+ * Grok Bot, the team's background helper: it runs schedules, watches the chain and checks the work, and hands
+ * problems back with an @mention. It has no wallet (it works through Cosign's tools), and its face is its own app icon.
+ */
+export const GROK_BOT: Member = {
+  id: "grokbot",
+  name: "Grok Bot",
+  kind: "agent",
+  sub: "Works in the background: schedules, onchain checks, follow-ups",
+  address: "",
+  image: "/brand/grok-bot.png",
+  badge: "Background",
+};
+
+/** Everyone in a room you could @ (not yourself): agents first, then Grok Bot, then people. */
 export function roomMembers(room: Room, team: Teammate[], agents: Agent[]): Member[] {
   return [
     ...agents.filter((a) => room.members.includes(a.id)).map(agentMember),
+    GROK_BOT,
     ...team.filter((t) => room.members.includes(t.id) && !t.you).map(personMember),
   ];
 }
@@ -30,14 +47,25 @@ export function roomMembers(room: Room, team: Teammate[], agents: Agent[]): Memb
 export const mentionedIn = (text: string, members: Member[]) =>
   members.filter((m) => new RegExp(`(^|\\s)@${m.name}(?![\\w-])`, "i").test(text));
 
-/** A member's face: the agent's orb or the teammate's initials. */
+/** A member's face: its own image (Grok Bot's app icon), the agent's orb, or the teammate's initials. */
 export function MemberFace({ m, className = "size-6" }: { m: Member; className?: string }) {
+  if (m.image) return <BrandFace src={m.image} name={m.name} className={className} />;
   return m.kind === "agent" ? (
     <AgentOrb hue={m.hue ?? "blue"} still className={className} />
   ) : (
     /* default size, so `className` sets it (the sm size's data selector would win over it) */
     <Avatar className={className}>
       <AvatarFallback className="text-[0.55rem]">{m.initials}</AvatarFallback>
+    </Avatar>
+  );
+}
+
+/** A connected product's own icon (e.g. the Grok Bot app icon, from its app bundle), in its rounded square. */
+export function BrandFace({ src, name, className = "size-6" }: { src: string; name: string; className?: string }) {
+  return (
+    <Avatar className={cn("rounded-[22%] after:rounded-[22%]", className)}>
+      <AvatarImage src={src} alt={name} className="rounded-[22%]" />
+      <AvatarFallback className="rounded-[22%] text-[0.55rem]">{name.slice(0, 2)}</AvatarFallback>
     </Avatar>
   );
 }
@@ -66,10 +94,14 @@ export function MentionChip({ m }: { m: Member }) {
         <div className="flex min-w-0 flex-col gap-0.5">
           <div className="flex items-center gap-1.5 font-medium">
             {m.name}
-            {m.kind === "agent" && <Tag variant="info">Agent</Tag>}
+            {m.kind === "agent" && <Tag variant="info">{m.badge ?? "Agent"}</Tag>}
           </div>
           <p className="truncate text-xs text-muted-foreground">{m.sub}</p>
-          <AddressLine address={m.address} label={`${m.name}'s wallet address`} className="-ml-0.5" />
+          {m.address ? (
+            <AddressLine address={m.address} label={`${m.name}'s wallet address`} className="-ml-0.5" />
+          ) : (
+            <p className="text-xs text-muted-foreground">No wallet · never holds a key</p>
+          )}
         </div>
       </PopoverContent>
     </Popover>
@@ -133,8 +165,16 @@ export const SOURCES: Record<string, Source> = {
  * A message's text with its @mentions and [[source]] citations drawn inline. "@Name" becomes a mention when Name is
  * someone in `members`; "[[key]]" becomes a citation of SOURCES[key]. Anything else stays text.
  */
+/* member names may have spaces ("Grok Bot"): match the longest names first, then any @word */
+const escape = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function splitter(members: Member[]) {
+  const names = members.map((m) => m.name).sort((a, b) => b.length - a.length).map(escape);
+  const named = names.length ? `@(?:${names.join("|")})(?![\\w])|` : "";
+  return new RegExp(`(${named}@[\\w-]+|\\[\\[[\\w-]+\\]\\])`, "gi");
+}
+
 export function Said({ text, members }: { text: string; members: Member[] }) {
-  const parts = text.split(/(@[\w-]+|\[\[[\w-]+\]\])/g);
+  const parts = text.split(splitter(members));
   return (
     <>
       {parts.map((p, i) => {

@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 const USDC_LOGO = getTokenIcon({ chainId: 1, address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" }) as string;
 
 export const EXPLORER = "https://explorer.testnet.arc.io/address/";
+export const TX_EXPLORER = "https://explorer.testnet.arc.io/tx/";
 export const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
 /** The workspace's treasury contract on Arc testnet (real address; balance and approvers mock). */
@@ -90,7 +91,8 @@ export const personAddress = (id: string) => PEOPLE[id] ?? walletOf(`person-${id
 export const LENA = { name: "Lena (contractor)", address: "0x7797c2a1e5b9d3f8064a2c7e1b5d9f3a8c6ef1e7" };
 
 /** A short address you can always copy or open on the explorer, for tight places (cards, table rows). */
-export function AddressLine({ address, label, className }: { address: string; label: string; className?: string }) {
+/** `kind="tx"` shows a transaction hash and links to the transaction instead of the address page. */
+export function AddressLine({ address, label, className, kind = "address" }: { address: string; label: string; className?: string; kind?: "address" | "tx" }) {
   const [copied, setCopied] = useState(false);
   return (
     <span className={cn("inline-flex items-center gap-0.5 font-mono text-xs text-muted-foreground", className)}>
@@ -110,7 +112,7 @@ export function AddressLine({ address, label, className }: { address: string; la
         {copied ? <Check /> : <Copy />}
       </Button>
       <Button variant="ghost" size="icon-sm" className="size-6" aria-label={`Open ${label} on the explorer`} asChild>
-        <a href={`${EXPLORER}${address}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+        <a href={kind === "tx" ? `${TX_EXPLORER}${address}` : `${EXPLORER}${address}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
           <ExternalLink />
         </a>
       </Button>

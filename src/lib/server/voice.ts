@@ -310,6 +310,10 @@ export function toolPhrase(tool: string, args: Record<string, unknown> = {}): st
       return "Drafting the payment...";
     case "request_topup":
       return "Drawing petty cash...";
+    case "list_team":
+      return "Checking who's on the team...";
+    case "mention":
+      return args.who ? `Passing this to ${String(args.who).replace(/^@/, "")}...` : "Passing this to a teammate...";
     case "memory_read":
     case "memory_search":
       return "Checking my notes...";

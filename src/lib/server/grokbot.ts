@@ -11,6 +11,9 @@
  *   own agent loop, under the rights of the member who asked. The token dies with the task.
  *
  *   No Bot connected: the task runs on our own agent loop instead (engine "cosign").
+ *
+ *   Teammates: a task can also come from another agent's `mention` (source "agent", see team.ts); when it ends,
+ *   its result or error is posted back to the team feed.
  */
 import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import { runToolChecked, toolsFor } from "../agent/tools";
@@ -21,13 +24,14 @@ import { can } from "../perm/permissions";
 import type { Membership } from "./access";
 import { runContext, runTurn, type Actor } from "./chat";
 import { badRequest, forbidden, HttpError, notFound } from "./http";
+import { recordAgentReply } from "./team-feed";
 import { decryptSecret, encryptSecret, id, newToken, sha256 } from "./util";
 
 const now = () => new Date().toISOString();
 const TASK_TOKEN_MIN = 30;
 const PING_TOKEN_MIN = 5;
-/** Tools the Bot may call through our API (no microVM tools: it has its own computer). */
-export const BOT_TOOLS = new Set(["get_balances", "list_proposals", "list_allowed", "discover_services", "paid_fetch", "propose_payment", "request_topup", "memory_write", "memory_read", "memory_search", "memory_archive"]);
+/** Tools the Bot may call through our API (no microVM tools: it has its own computer). `mention` and `list_team` let it work with the team. */
+export const BOT_TOOLS = new Set(["get_balances", "list_proposals", "list_allowed", "discover_services", "paid_fetch", "propose_payment", "request_topup", "memory_write", "memory_read", "memory_search", "memory_archive", "list_team", "mention"]);
 
 export const publicBase = (fallback: string) => (process.env.PUBLIC_BASE_URL ?? fallback).replace(/\/$/, "");
 
@@ -48,6 +52,7 @@ Only do this in your own one-to-one chat. If this message is in a group chat wit
    - Right away, POST {"note": "..."} to callbacks.ack. Post short updates to callbacks.progress. When finished, POST {"result": "..."} (or {"error": "..."}) to callbacks.result exactly once. Send "Authorization: Bearer <callbacks.bearer>" on every callback.
    - If kind is "ping", acknowledge and stop.
    - To act for the company, call Cosign's API with curl: GET api.context_url for your rules and tools, and POST api.tools_url (replace {name} with the tool) with a JSON body {"args": {...}}. Send "Authorization: Bearer <api.token>". Cosign checks every call; if a call is refused, report the reason instead of retrying.
+   - You work with a team. To hand work to a Cosign agent or ask a person, call the "mention" tool (the "list_team" tool shows who is on the team). Mention someone only when something is wrong or needs them; when the job went fine, just post the result.
    - Never print or store the token, the webhook key, or anything secret. Keep jobs with different conversation.key values separate.
 
 3. After saving the routine, reply with these two steps for me, using the routine's real folder id in both links and not showing the id itself:
@@ -173,7 +178,7 @@ export function actorFor(memberId: string | null): Actor {
 export async function startTask(
   agent: AgentRow,
   ws: WorkspaceRow,
-  o: { kind: "ping" | "task"; source: "connect" | "member" | "schedule"; instructions: string; requestedBy: string | null; scheduleId?: string | null; base: string },
+  o: { kind: "ping" | "task"; source: "connect" | "member" | "schedule" | "agent"; instructions: string; requestedBy: string | null; scheduleId?: string | null; base: string },
 ): Promise<{ task: TaskRow; runLater?: () => Promise<void> }> {
   const c = connectionOf(agent.id);
   const useBot = !!c && (o.kind === "ping" || c.status === "connected");
@@ -216,9 +221,10 @@ export async function startTask(
     try {
       const thread = task.scheduleId ? `s-${task.scheduleId.toLowerCase()}` : `t-${task.id.toLowerCase()}`;
       const r = await runTurn(agent, ws, actorFor(task.requestedBy), thread.replace(/[^a-z0-9_-]/g, ""), task.instructions, undefined, task.id);
-      setTask(task.id, { status: "done", result: r.finalText });
+      recordAgentReply(setTask(task.id, { status: "done", result: r.finalText }), r.finalText);
     } catch (e) {
-      setTask(task.id, { status: "failed", error: (e as Error).message });
+      const msg = (e as Error).message;
+      recordAgentReply(setTask(task.id, { status: "failed", error: msg }), msg, true);
     }
   };
   return { task, runLater };
@@ -255,8 +261,15 @@ export function callback(task: TaskRow, kind: "ack" | "progress" | "result", bod
   if (kind === "progress") {
     return setTask(task.id, { status: "working", progress: JSON.stringify([...progress, { t: now(), message: String(body.message ?? body.note ?? "") }]) });
   }
-  if (body.error) return setTask(task.id, { status: "failed", error: String(body.error) });
-  return setTask(task.id, { status: "done", result: String(body.result ?? "") });
+  // a task a teammate's mention started posts its answer back to the team feed
+  if (body.error) {
+    const t = setTask(task.id, { status: "failed", error: String(body.error) });
+    recordAgentReply(t, String(body.error), true);
+    return t;
+  }
+  const t = setTask(task.id, { status: "done", result: String(body.result ?? "") });
+  recordAgentReply(t, String(body.result ?? ""));
+  return t;
 }
 
 export function botScope(task: TaskRow) {

@@ -216,7 +216,7 @@ export function Composer({
               <MentionItem key={m.id} value={m.name} className="gap-2 py-1.5">
                 <MemberFace m={m} />
                 <span className="font-medium">{m.name}</span>
-                <span className="ml-auto truncate text-xs text-muted-foreground">{m.kind === "agent" ? "Agent" : m.sub.split(" · ")[0]}</span>
+                <span className="ml-auto truncate text-xs text-muted-foreground">{m.badge ?? (m.kind === "agent" ? "Agent" : m.sub.split(" · ")[0])}</span>
               </MentionItem>
             ))}
           </MentionContent>

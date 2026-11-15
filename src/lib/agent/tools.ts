@@ -36,7 +36,7 @@ type ToolDef = {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
-  kind: "sandbox" | "memory" | "money" | "read";
+  kind: "sandbox" | "memory" | "money" | "read" | "team";
   ability?: keyof Abilities; // offered only when the agent has this ability
   check?: (ctx: AgentContext, args: Record<string, unknown>) => string | null; // returns refusal reason or null
   run: (ctx: AgentContext, args: Record<string, unknown>) => Promise<unknown> | unknown;
@@ -202,6 +202,36 @@ export const TOOLS: ToolDef[] = [
     },
   },
 
+  // ── team: work with other agents (ours or Grok Bot) and people; see server/team.ts for the guards ──
+  {
+    name: "list_team",
+    kind: "team",
+    description:
+      "Everyone you can work with: people (name, role) and agents (name, what they do, whether they run live or in the background on Grok Bot, and whether they're busy). Look before you mention someone.",
+    parameters: obj({}),
+    run: async (c) => {
+      const s = teamScope(c);
+      const { listTeam } = await import("../server/team");
+      return listTeam({ workspaceId: s.workspaceId, memberId: s.memberId, selfAgentId: s.agentId });
+    },
+  },
+  {
+    name: "mention",
+    kind: "team",
+    description:
+      "Hand work to a teammate or ask a person: posts your message to the team with a real @mention, and wakes the agent you mention (it works for the same person you do; people are notified). " +
+      "Use it when something is wrong, needs another agent, or only a person can decide. When the work went fine, don't mention anyone: just report. " +
+      "Put the facts they need in the message (amounts, proposal numbers, what's wrong). Never type @names in plain text expecting anyone to be notified.",
+    parameters: obj({ who: str("a name or id from list_team"), message: str("what you need from them, with the facts they need") }, ["who", "message"]),
+    run: async (c, a) => {
+      const s = teamScope(c);
+      const { mention } = await import("../server/team");
+      const { result, runLater } = await mention({ workspaceId: s.workspaceId, fromAgentId: s.agentId, memberId: s.memberId, fromTaskId: s.taskId ?? null, who: String(a.who ?? ""), message: String(a.message ?? "") });
+      void runLater?.(); // the mentioned agent works on its own; its answer comes back to the team feed
+      return result;
+    },
+  },
+
   // ── money ──
   {
     name: "paid_fetch",
@@ -286,6 +316,12 @@ export const TOOLS: ToolDef[] = [
 ];
 
 export const toolByName = new Map(TOOLS.map((t) => [t.name, t]));
+
+/** Team tools need a saved agent in a workspace (old script profiles have no scope). */
+function teamScope(c: AgentContext): RunScope {
+  if (!c.scope?.workspaceId || !c.scope.agentId) throw new Error("team tools need a saved agent in a workspace");
+  return c.scope;
+}
 
 /** The agent's allowed sellers, each with the free catalog it publishes at its base URL (our demo seller does). */
 async function sellersOf(entries: string[]) {

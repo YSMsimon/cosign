@@ -18,6 +18,8 @@ import { botContext, botTool, callback, connect, connectionOf, connectionView, d
 import { badRequest, errorResponse, forbidden, HttpError, notFound, parseBody } from "./http";
 import { activityMatcher, approverChangeTx, cancelTx, cosignTx, decideApproval, listApprovals, listProposals, workspaceActivity } from "./money";
 import { createSchedule, deleteSchedule, listSchedules, tick, updateSchedule } from "./schedules";
+import { listTeam } from "./team";
+import { listTeamMessages, type TeamMessageEvent } from "./team-feed";
 import { safeEqual } from "./util";
 import { postCall, startVoice, voiceLlm, voiceStatus, voiceTaskFor } from "./voice";
 import {
@@ -134,6 +136,16 @@ route("GET", "/workspaces/:ws/tasks", (req, p) => {
   const m = requireMember(req, p.ws);
   const visible = listAgents(m).map((a) => a.id);
   return { tasks: listTasks(m.workspace.id, visible) };
+});
+
+// team: who agents can work with, and the feed of @mentions between agents and people (agents post with the mention tool)
+route("GET", "/workspaces/:ws/team", (req, p) => {
+  const m = requireMember(req, p.ws);
+  return listTeam({ workspaceId: m.workspace.id, memberId: m.member.id });
+});
+route("GET", "/workspaces/:ws/team/messages", (req, p) => {
+  const m = requireMember(req, p.ws);
+  return { messages: listTeamMessages(m.workspace.id, Number(new URL(req.url).searchParams.get("limit") ?? 100)) };
 });
 
 // ───────────── agents ─────────────
@@ -362,14 +374,20 @@ function activityStream(req: Request, m: Membership): Response {
       const onDraft = (d: ProposalDrafted) => {
         if (d.workspaceId === m.workspace.id) send("proposal.drafted", d);
       };
+      // an agent @mentioned a teammate or a person, or a mentioned agent answered
+      const onTeam = (e: TeamMessageEvent) => {
+        if (e.workspaceId === m.workspace.id) send("team.message", e.message);
+      };
       activityBus.on("activity", onActivity);
       activityBus.on("proposal.drafted", onDraft);
+      activityBus.on("team.message", onTeam);
       const ping = setInterval(() => controller.enqueue(enc.encode(`: ping\n\n`)), 15_000);
       send("ready", { at: new Date().toISOString() });
       cleanup = () => {
         clearInterval(ping);
         activityBus.off("activity", onActivity);
         activityBus.off("proposal.drafted", onDraft);
+        activityBus.off("team.message", onTeam);
       };
       req.signal.addEventListener("abort", () => {
         cleanup();

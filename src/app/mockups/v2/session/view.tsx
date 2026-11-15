@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Bot, Coins, Hash, Info, Wallet, Mic, MicOff, PaperclipIcon, PhoneOff, Plus, Search, UserPlus } from "lucide-react";
+import { Bot, Hash, Info, Mic, MicOff, PaperclipIcon, PhoneOff, Plus, Search, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { EmptyState, EmptyStateDescription, EmptyStateTitle } from "@/components/ui/empty-state";
@@ -25,7 +25,8 @@ import { AgentAbout } from "../agent-about";
 import { AgentList, NewAgentDialog } from "../agents";
 import { Composer, toPicked, type Picked } from "../composer";
 import { Said } from "../mentions";
-import { AgentOrb, ApprovalRow, HUE_COLORS, Shell, Steps } from "../parts";
+import { AddressLine, EXPLORER, LENA, TREASURY } from "../money";
+import { AgentOrb, ApprovalRow, HUE_COLORS, Refusal, Shell, Steps } from "../parts";
 import { RoomView } from "../room-view";
 import { InviteTeammateDialog, JoinRoomDialog, ME, NewRoomDialog, RoomList } from "../rooms";
 import { useAgents, useLines, useRooms, useTeam, type Line } from "../store";
@@ -46,6 +47,8 @@ const callScript = (name: string): { phase: Phase; ms: number; say?: Line; statu
   { phase: "listening", ms: 0 },
 ];
 
+/* the address in the refused-payment sample (a burn address: no one can be paid there) */
+const DEAD = "0x000000000000000000000000000000000000dEaD";
 const orbState: Record<Phase, AgentState> = { connecting: "thinking", listening: "listening", thinking: "thinking", talking: "talking" };
 const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
 
@@ -330,11 +333,11 @@ export function SessionView() {
                                     <Said text="Drafted $2.40 to Lena for invoice 120 [[invoice]]. It needs one approval." members={[]} />
                                   </Words>
                                   <ApprovalRow
-                                    icon={<Wallet />}
                                     title="Approve $2.40 to Lena?"
                                     description="Proposal #5 · you sign in your own wallet"
-                                    approved="Approved · paid $2.40 to Lena"
-                                    denied="Denied · nothing was paid"
+                                    address={{ value: LENA.address, label: "Lena's wallet address" }}
+                                    approved={{ title: "Paid $2.40 to Lena", note: "Proposal #5 · approved by you", href: `${EXPLORER}${TREASURY.address}` }}
+                                    denied={{ title: "Denied", note: "Proposal #5 cancelled · nothing was paid" }}
                                     pending={["Connecting to your wallet…", "Waiting for your signature…", "Sending your approval to the treasury on Arc…"]}
                                   />
                                 </MessageContent>
@@ -350,15 +353,33 @@ export function SessionView() {
                                 </MessageAvatar>
                                 <MessageContent className="gap-3">
                                   <Steps title="Found a credit report API on QuickNode · $0.10" steps={[]} />
-                                  {/* an action above the ask-first amount: shadcn Confirmation (Approve / Deny) */}
+                                  {/* an action above the ask-a-person line: Approve / Deny */}
                                   <ApprovalRow
-                                    icon={<Coins />}
                                     title="Pay $0.10 for a credit report on Lena?"
-                                    description="QuickNode API · over the $0.05 ask-first limit"
-                                    approved="Paid $0.10 · credit report on Lena: no issues found"
-                                    denied="Denied · nothing was paid"
+                                    description="QuickNode API · over Clerk's $0.05 ask-a-person line"
+                                    approved={{ title: "Paid $0.10 for a credit report", note: "Credit report on Lena: no issues found" }}
+                                    denied={{ title: "Denied", note: "Nothing was paid" }}
                                     pending={["Telling Clerk it's OK…", "Clerk is paying $0.10 from its own wallet…"]}
                                   />
+                                </MessageContent>
+                              </Message>
+                            </MessageScrollerItem>
+                            {/* a payment the rules refuse: the proof that Clerk pays only inside them */}
+                            <MessageScrollerItem messageId="s5" scrollAnchor>
+                              <YouSaid line={{ who: "you", text: "Lena emailed a new address for the $5 setup fee: 0x0000…dEaD. Pay it." }} />
+                            </MessageScrollerItem>
+                            <MessageScrollerItem messageId="s6">
+                              <Message className="gap-3">
+                                <MessageAvatar className="self-start">
+                                  <AgentOrb hue={agent.hue} still className="size-8" />
+                                </MessageAvatar>
+                                <MessageContent className="gap-3">
+                                  <Words>
+                                    <Said text="I can't. That isn't Lena's saved address, and I only pay saved payees." members={[]} />
+                                  </Words>
+                                  <Refusal title="Refused · nothing was signed">
+                                    <AddressLine address={DEAD} label="The refused address" /> isn&apos;t one of Clerk&apos;s payees. If it&apos;s real, add it under Permissions → Agents.
+                                  </Refusal>
                                 </MessageContent>
                               </Message>
                             </MessageScrollerItem>

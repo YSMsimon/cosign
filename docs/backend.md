@@ -15,6 +15,7 @@ Next.js route handlers over SQLite (Drizzle), Circle developer-controlled wallet
 | Payment | A proposal in the treasury contract; an agent drafts, approvers cosign from their own wallets | Arc testnet |
 | Task | Background work for Grok Bot (or our own loop when no Bot is connected) | SQLite `tasks` |
 | Schedule | When a task runs, stored here; the tick fires due ones | SQLite `schedules` |
+| Team message | An @mention one agent made with the `mention` tool (to an agent or a person), or a mentioned agent's answer | SQLite `team_messages` |
 
 ## Sign-in and access
 
@@ -116,8 +117,31 @@ token use and cost. Each person has their own thread (`GET /agents/:id/thread`);
   `{ workspaceId, treasury, proposalId, agentId, requestedBy, taskId, to, amountUsd, memo, tx, at }`.
   `taskId` is the voice session or task it came from, so the page in that call opens the cosign card;
   every page can add it to #approvals. The model never decides what appears on screen.
+- `team.message`: an agent @mentioned a teammate or a person, or a mentioned agent answered (a `team_messages` row).
 
 Events come from an in-process bus, so this needs one long-running server (not serverless functions).
+
+## Team: agents hand work to each other
+
+Every agent, ours or Grok Bot (through its tool API), has two tools:
+
+- `list_team`: the people (name, role) and the agents the person it works for may use (name, what it does,
+  `live` or `background (Grok Bot)`, busy or not).
+- `mention(who, message)`: posts the message to the team feed with a real @mention, by id (never parsed from text).
+  Mentioning **an agent** starts a task for it (`source: "agent"`), under the rights of the same person: on its
+  Grok Bot routine if one is connected, otherwise on our own loop. Mentioning **a person** notifies them in the feed.
+  When the mentioned agent's task ends, its result (or `Couldn't finish: …`) is posted back in the same chain.
+  If its Grok Bot can't be reached, Cosign posts `Couldn't start …`: never silence.
+
+Guards (`src/lib/server/team.ts`), per chain of hand-offs since a person or a schedule started the work:
+- one agent can ask the same agent at most 3 times (the first ask and 2 retries);
+- at most 6 agent-to-agent hand-offs without a person;
+- an agent can't mention itself, and only agents the person may use can be woken;
+- a mention never approves or signs: money still ends at a person's cosign.
+
+Read the feed with `GET /workspaces/:ws/team/messages` or live as `team.message` on the activity stream; the team
+as the caller sees it is `GET /workspaces/:ws/team`. The agent's instructions say to mention someone only when
+something is wrong or needs them, and to just report when the work went fine.
 
 ## Grok Bot (webhook routine)
 
@@ -227,7 +251,7 @@ so the stale log is never copied back). Back up `data/` and restart.
 
 ## Tests
 
-- `pnpm test:unit`: 45 tests, no network: roles, agent access, rules and loosening, all seven controls
+- `pnpm test:unit`: 53 tests, no network: team mentions and their guards, roles, agent access, rules and loosening, all seven controls
   against a throwaway database, wallet sign-in, the checked tool runner, schedule times, secret encryption,
   the `proposal.drafted` event, `list_allowed`, voice (silence via `skip_turn`, the ElevenLabs agent config, the streamed turn format, "One moment",
   retries never running a turn twice, spoken errors, speech cleanup, post-call signatures and webhook).
@@ -265,6 +289,8 @@ GET    /api/v1/workspaces/:ws/approvals            ask-a-person purchase request
 POST   /api/v1/workspaces/:ws/approvals/:rid       { decision: approve | deny }
 GET    /api/v1/workspaces/:ws/activity
 GET    /api/v1/workspaces/:ws/activity/stream      SSE
+GET    /api/v1/workspaces/:ws/team                    people + agents you may use
+GET    /api/v1/workspaces/:ws/team/messages           the team feed (@mentions and answers)
 GET    /api/v1/workspaces/:ws/tasks
 GET    /api/v1/workspaces/:ws/agents
 POST   /api/v1/workspaces/:ws/agents               { name, prompt, visibility, preset, allowedRoleIds, controls }

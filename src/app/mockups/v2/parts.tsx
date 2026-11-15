@@ -3,14 +3,15 @@
 /** Simple version: two pages (Team, Permissions) and one subpage (a session). Pesto UI + shadcn only. */
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CircleCheck, MessagesSquare, ShieldCheck } from "lucide-react";
-import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { CircleCheck, ExternalLink, MessagesSquare, ShieldCheck } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { IconRail, IconRailItem, IconRailSpacer } from "@/components/icon-rail";
 import { OrbAvatar, type OrbHue } from "@/components/orb-avatar";
 import { Spinner } from "@/components/ui/spinner";
 import { Orb, type AgentState } from "@/components/ui/orb";
 import { cn } from "@/lib/utils";
 import { AccountMenu } from "./account-menu";
+import { AddressLine } from "./money";
 import { Button } from "@/components/ui/button";
 import { Trace, TraceCollapsible, TraceCollapsibleContent, TraceCollapsibleTrigger, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace";
 
@@ -146,28 +147,30 @@ export function Steps({ title, steps, open = false, running = false }: { title: 
 }
 
 export type Decision = "open" | "approved" | "denied";
+type Outcome = { title: string; note?: string; href?: string };
 
 /**
- * Asks for a yes before an action runs: shadcn AI Elements' Confirmation pattern (an outline Item with Deny and
- * Approve). Used for every action that needs a person: a paid API call above the ask-first amount, a command, a
- * treasury payment (no proposal cards: Simon, 2026-11-14). After Approve, `pending` steps (connecting the wallet,
- * waiting for the signature, sending to the vault) show one by one beside a Pesto Spinner; then the step line. Once decided it becomes one line of the agent's steps (Trace), like the shadcn example.
+ * Asks for a yes before an action runs, as a Pesto Alert (Simon picked option B, 2026-11-14). Used for every action
+ * that needs a person: a paid API call above the ask-a-person line, a command, a treasury payment. The disc carries
+ * the state: amber while it waits, green once paid, plain once denied. After Approve, `pending` steps (connecting the
+ * wallet, waiting for the signature, sending to the treasury) show one by one beside a Pesto Spinner.
  */
 export function ApprovalRow({
-  icon,
   title,
   description,
+  address,
   approved,
   denied,
   decision,
   onDecide,
   pending = [],
 }: {
-  icon: React.ReactNode;
   title: string;
   description: string;
-  approved: string; // the step line once approved
-  denied: string; // the step line once denied
+  /** shown under the description, copyable and linked to the explorer */
+  address?: { value: string; label: string };
+  approved: Outcome;
+  denied: Outcome;
   decision?: Decision; // controlled from outside; otherwise the row keeps its own
   onDecide?: (approved: boolean) => void;
   /** what happens after Approve, in order (prototype: about a second each) */
@@ -194,37 +197,68 @@ export function ApprovalRow({
     setOwn(yes ? "approved" : "denied");
     onDecide?.(yes);
   };
-  if (d === "open") {
+
+  if (d !== "open") {
+    const o = d === "approved" ? approved : denied;
     return (
-      <Item variant="outline" size="sm" className="max-w-md">
-        <ItemMedia variant="icon">{icon}</ItemMedia>
-        <ItemContent>
-          <ItemTitle>{title}</ItemTitle>
-          <ItemDescription aria-live="polite">{step === null ? description : pending[step]}</ItemDescription>
-        </ItemContent>
-        <ItemActions>
-          {step === null ? (
-            <>
-              <Button size="sm" variant="outline" onClick={() => decide(false)}>
-                Deny
-              </Button>
-              <Button size="sm" onClick={() => decide(true)}>
-                Approve
-              </Button>
-            </>
-          ) : (
-            <Spinner size="sm" label={pending[step]} className="mx-3 text-muted-foreground" />
-          )}
-        </ItemActions>
-      </Item>
+      <Alert
+        variant={d === "approved" ? "success" : "default"}
+        action={
+          o.href && (
+            <Button size="icon" variant="ghost" className="size-7" aria-label="On the explorer" asChild>
+              <a href={o.href} target="_blank" rel="noreferrer">
+                <ExternalLink />
+              </a>
+            </Button>
+          )
+        }
+      >
+        <AlertTitle>{o.title}</AlertTitle>
+        {o.note && <AlertDescription>{o.note}</AlertDescription>}
+      </Alert>
     );
   }
+  const running = step !== null;
   return (
-    <Trace>
-      <TraceLine>
-        <TraceIcon>{icon}</TraceIcon>
-        <TraceTitle>{d === "approved" ? approved : denied}</TraceTitle>
-      </TraceLine>
-    </Trace>
+    <Alert
+      variant="warning"
+      severityLabel="Needs your approval"
+      action={
+        running ? (
+          <Spinner size="sm" label={pending[step]} className="mx-3 text-muted-foreground" />
+        ) : (
+          <span className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => decide(false)}>
+              Deny
+            </Button>
+            <Button size="sm" onClick={() => decide(true)}>
+              Approve
+            </Button>
+          </span>
+        )
+      }
+    >
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription aria-live="polite">
+        {running ? (
+          pending[step]
+        ) : (
+          <>
+            <span className="block">{description}</span>
+            {address && <AddressLine address={address.value} label={address.label} />}
+          </>
+        )}
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+/** A payment the agent's rules refused: a Pesto Alert in the destructive tone. Nothing was signed. */
+export function Refusal({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <Alert variant="destructive" severityLabel="Refused">
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription>{children}</AlertDescription>
+    </Alert>
   );
 }

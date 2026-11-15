@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Lock, UserPlus, Wallet } from "lucide-react";
+import { CalendarClock, Landmark, Lock, Radio, UserPlus } from "lucide-react";
+import { DescriptionList } from "@/components/description-list";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import {
@@ -13,17 +15,20 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
 import { Composer, type Picked } from "./composer";
-import { roomMembers, Said } from "./mentions";
+import { GROK_BOT, mentionedIn, personMember, roomMembers, Said } from "./mentions";
+import { AddressLine, EXPLORER, LENA, TREASURY } from "./money";
 import { ApprovalRow, Steps } from "./parts";
 import { InviteToRoomDialog, JoinRoomEmpty, ME, RoomIcon, RoomMembers } from "./rooms";
 import { roomKey, useAgents, useLines, useRooms, useTeam, type Room } from "./store";
-import { AgentSaid, PersonSaid, Words, YouSaid } from "./thread";
+import { AgentSaid, ChainEvent, GrokSaid, PersonSaid, Words, YouSaid } from "./thread";
 
-/** Agents in the room named with @ in a message, e.g. "@Clerk can you pay this?" */
-function mentioned(text: string, names: { id: string; name: string }[]) {
-  const said = [...text.matchAll(/@([\w-]+)/g)].map((m) => m[1].toLowerCase());
-  return names.filter((a) => said.includes(a.name.toLowerCase()));
-}
+/* sample transactions for the contractor run (mock) */
+const TX = {
+  lena: "0x9f1c4b7e2a6d8c0f3e5b1a9d7c2e4f6a8b0c1d3e5f7a9b2c4d6e8f0a1b3c5d7e",
+  noor: "0x3a7e9c1b5d2f8e4a6c0b9d1f3e5a7c9b2d4f6a8c0e1b3d5f7a9c2e4b6d8f0a2c",
+  kai: "0x7d2b6f0a4c8e1d5b9f3a7c2e6b0d4f8a1c5e9b3d7f0a2c6e8b4d1f5a9c3e7b0d",
+};
+const STRANGER = "0x5e3f9a1c7b2d4e6f8a0b1c3d5e7f9a2b4c6d8e0f";
 
 /**
  * A room: a shared conversation for teammates and agents. Everyone in it sees every message; an agent answers when
@@ -37,10 +42,13 @@ export function RoomView({ room, files, setFiles }: { room: Room; files: Picked[
   const { lines, say } = useLines();
   const [inviting, setInviting] = useState(false);
   const [replying, setReplying] = useState<string | null>(null);
+  const [paid, setPaid] = useState(false); // prototype: approving the contractor run shows Grok Bot's onchain check
 
   const extra = lines[roomKey(room.id)] ?? [];
   const roomAgents = agents.filter((a) => room.members.includes(a.id));
   const members = roomMembers(room, team, agents);
+  /* who a message can name, you included (Grok Bot may @ you) */
+  const named = [...members, ...team.filter((t) => t.you).map(personMember)];
   const replier = agents.find((a) => a.id === replying);
   const seeded = room.id === "finance";
 
@@ -50,8 +58,14 @@ export function RoomView({ room, files, setFiles }: { room: Room; files: Picked[
 
   const send = (text: string, picked: Picked[]) => {
     say(roomKey(room.id), { who: "you", text, files: picked.length ? picked.map((f) => f.name) : undefined });
-    const [agent] = mentioned(text, roomAgents);
-    if (!agent) return;
+    const [first] = mentionedIn(text, members).filter((m) => m.kind === "agent"); // room agents and Grok Bot
+    if (!first) return;
+    if (first.id === GROK_BOT.id) {
+      /* Grok Bot works in the background: no typing dots, it reports when done */
+      setTimeout(() => say(roomKey(room.id), { who: "agent", author: GROK_BOT.id, text: "(Prototype) On it in the background. I'll post here when it's done, and @ whoever needs to act." }), 1200);
+      return;
+    }
+    const agent = roomAgents.find((a) => a.id === first.id)!;
     setReplying(agent.id);
     setTimeout(() => {
       say(roomKey(room.id), { who: "agent", author: agent.id, text: `(Prototype) ${agent.name} would answer here for #${room.name}, following its guidelines.` });
@@ -119,15 +133,142 @@ export function RoomView({ room, files, setFiles }: { room: Room; files: Picked[
                             />
                           </Words>
                           <ApprovalRow
-                            icon={<Wallet />}
                             title="Approve $2.40 to Lena?"
                             description="Proposal #5 · you sign in your own wallet"
-                            approved="Approved · paid $2.40 to Lena"
-                            denied="Denied · nothing was paid"
+                            address={{ value: LENA.address, label: "Lena's wallet address" }}
+                            approved={{ title: "Paid $2.40 to Lena", note: "Proposal #5 · approved by you", href: `${EXPLORER}${TREASURY.address}` }}
+                            denied={{ title: "Denied", note: "Proposal #5 cancelled · nothing was paid" }}
                             pending={["Connecting to your wallet…", "Waiting for your signature…", "Sending your approval to the treasury on Arc…"]}
                           />
                         </AgentSaid>
                       </MessageScrollerItem>
+
+                      {/* the team at work: you hand a routine to Clerk, Clerk hands it to Grok Bot, and on Friday Grok Bot runs it,
+                          checks Clerk's drafts against the invoices, hands a mistake back, and confirms the payments onchain */}
+                      <MessageScrollerItem messageId="r4" scrollAnchor>
+                        <YouSaid line={{ who: "you", text: "x" }}>
+                          <Said text="@Clerk set up a schedule: pay the contractors every Friday at 9." members={named} />
+                        </YouSaid>
+                      </MessageScrollerItem>
+                      <MessageScrollerItem messageId="r5">
+                        <AgentSaid name="Clerk" hue="blue">
+                          <Steps title="Set up the Friday run in 3 s" steps={["Looked up the team · Clerk, Auditor, Scribe, Grok Bot", "Created a schedule · Fridays 9:00 · run by Grok Bot", "Mentioned Grok Bot"]} />
+                          <Words>
+                            <Said text="Done. @Grok Bot will run it every Friday at 9:00 and tell me if anything is off." members={named} />
+                          </Words>
+                        </AgentSaid>
+                      </MessageScrollerItem>
+                      <MessageScrollerItem messageId="r6">
+                        <GrokSaid>
+                          <Alert icon={<CalendarClock />}>
+                            <AlertTitle>Scheduled · every Friday at 9:00</AlertTitle>
+                            <AlertDescription>Pay the contractors, for Clerk · next run Fri, Nov 20</AlertDescription>
+                          </Alert>
+                        </GrokSaid>
+                      </MessageScrollerItem>
+                      <MessageScrollerItem messageId="r7">
+                        <ChainEvent icon={<CalendarClock />}>Friday 9:00 · Grok Bot started the contractor run</ChainEvent>
+                      </MessageScrollerItem>
+                      <MessageScrollerItem messageId="r8">
+                        <GrokSaid>
+                          <Steps title="Checked what's due in 40 s" steps={["Read 3 contractor invoices", "Checked the treasury on Arc · $48.60 USDC"]} />
+                          <Words>
+                            <Said text="@Clerk 3 contractor invoices are due today: Lena $2.40, Noor $3.00, Kai $1.50. Please draft them." members={named} />
+                          </Words>
+                        </GrokSaid>
+                      </MessageScrollerItem>
+                      <MessageScrollerItem messageId="r9">
+                        <AgentSaid name="Clerk" hue="blue">
+                          <Steps title="Drafted 3 payments in 9 s" steps={["Matched Lena, Noor and Kai to saved payees", "Drafted #6 · Lena $2.40", "Drafted #7 · Noor $3.00", "Drafted #8 · Kai $1.80"]} />
+                          <Words>
+                            <Said text="Drafted #6, #7 and #8. @Grok Bot over to you for the check." members={named} />
+                          </Words>
+                        </AgentSaid>
+                      </MessageScrollerItem>
+                      <MessageScrollerItem messageId="r10">
+                        <ChainEvent icon={<Radio />}>Onchain · 3 new proposals, seen by QuickNode</ChainEvent>
+                      </MessageScrollerItem>
+                      <MessageScrollerItem messageId="r11">
+                        <GrokSaid>
+                          <Steps title="Checked 3 drafts against their invoices" steps={["#6 matches invoice 122", "#7 matches invoice 123", "#8 is $1.80, invoice 124 says $1.50"]} />
+                          <Alert variant="warning" severityLabel="Warning">
+                            <AlertTitle>#8 doesn&apos;t match its invoice</AlertTitle>
+                            <AlertDescription>$1.80 drafted · invoice 124 says $1.50</AlertDescription>
+                          </Alert>
+                          <Words>
+                            <Said text="@Clerk please fix #8 before anyone approves." members={named} />
+                          </Words>
+                        </GrokSaid>
+                      </MessageScrollerItem>
+                      <MessageScrollerItem messageId="r12">
+                        <AgentSaid name="Clerk" hue="blue">
+                          <Steps title="Fixed #8 in 6 s" steps={["Read invoice 124 again · $1.50", "Cancelled #8", "Drafted #9 · Kai $1.50"]} />
+                          <Words>
+                            <Said text="I read last month's total. Cancelled #8 and drafted #9 for $1.50. @Grok Bot can you check it?" members={named} />
+                          </Words>
+                        </AgentSaid>
+                      </MessageScrollerItem>
+                      <MessageScrollerItem messageId="r13">
+                        <GrokSaid>
+                          <Alert variant="success">
+                            <AlertTitle>#9 checked · matches invoice 124</AlertTitle>
+                          </Alert>
+                          <Words>
+                            <Said text="@Priya #6, #7 and #9 are ready for your approval." members={named} />
+                          </Words>
+                          <ApprovalRow
+                            title="Approve 3 contractor payments, $6.90?"
+                            description="Proposals #6, #7 and #9 · you sign each one in your wallet"
+                            approved={{ title: "Approved 3 payments, $6.90", note: "The treasury pays them now" }}
+                            denied={{ title: "Denied", note: "Nothing was paid" }}
+                            pending={["Signing #6…", "Signing #7…", "Signing #9…"]}
+                            onDecide={(yes) => yes && setTimeout(() => setPaid(true), 900)}
+                          />
+                        </GrokSaid>
+                      </MessageScrollerItem>
+                      {paid && (
+                        <>
+                          <MessageScrollerItem messageId="r14">
+                            <ChainEvent icon={<Radio />}>Onchain · 3 payments, seen by QuickNode</ChainEvent>
+                          </MessageScrollerItem>
+                          <MessageScrollerItem messageId="r15">
+                            {/* success: Grok Bot checks each payment on Arc itself, reports with links, and @mentions no one */}
+                            <GrokSaid>
+                              <Alert variant="success">
+                                <AlertTitle>All 3 contractors paid</AlertTitle>
+                                <AlertDescription className="mt-2">
+                                  <DescriptionList
+                                    layout="divided"
+                                    items={[
+                                      { id: "lena", term: "Lena · $2.40", details: <AddressLine kind="tx" address={TX.lena} label="Lena's payment" /> },
+                                      { id: "noor", term: "Noor · $3.00", details: <AddressLine kind="tx" address={TX.noor} label="Noor's payment" /> },
+                                      { id: "kai", term: "Kai · $1.50", details: <AddressLine kind="tx" address={TX.kai} label="Kai's payment" /> },
+                                    ]}
+                                  />
+                                </AlertDescription>
+                              </Alert>
+                              <Words>Recorded against invoices 122, 123 and 124.</Words>
+                            </GrokSaid>
+                          </MessageScrollerItem>
+                          <MessageScrollerItem messageId="r16">
+                            <ChainEvent icon={<Landmark />}>Onchain · money in, seen by QuickNode</ChainEvent>
+                          </MessageScrollerItem>
+                          <MessageScrollerItem messageId="r17">
+                            {/* no agent can fix this one: Grok Bot asks a person */}
+                            <GrokSaid>
+                              <Alert variant="warning" severityLabel="Warning">
+                                <AlertTitle>$5.00 came in from an unknown sender</AlertTitle>
+                                <AlertDescription>
+                                  <AddressLine address={STRANGER} label="The sender's address" />
+                                </AlertDescription>
+                              </Alert>
+                              <Words>
+                                <Said text="@Simon do you know who sent this? I haven't recorded it." members={named} />
+                              </Words>
+                            </GrokSaid>
+                          </MessageScrollerItem>
+                        </>
+                      )}
                     </>
                   )}
                   {extra.map((l, i) => {
@@ -139,6 +280,12 @@ export function RoomView({ room, files, setFiles }: { room: Room; files: Picked[
                           <YouSaid line={l}>
                             <Said text={l.text} members={members} />
                           </YouSaid>
+                        ) : l.author === GROK_BOT.id ? (
+                          <GrokSaid>
+                            <Words>
+                              <Said text={l.text} members={named} />
+                            </Words>
+                          </GrokSaid>
                         ) : agent ? (
                           <AgentSaid name={agent.name} hue={agent.hue}>
                             <Words>

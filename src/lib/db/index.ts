@@ -49,7 +49,7 @@ function open() {
   return drizzle(sqlite, { schema });
 }
 
-/** Workspaces, people, agents, Grok Bot and schedules (mirrors schema.ts). */
+/** Workspaces, people, agents, Grok Bot, schedules and the team feed (mirrors schema.ts). */
 const PRODUCT_DDL = `
   CREATE TABLE IF NOT EXISTS users (address TEXT PRIMARY KEY, created_at TEXT NOT NULL, last_login_at TEXT);
   CREATE TABLE IF NOT EXISTS auth_nonces (nonce TEXT PRIMARY KEY, created_at TEXT NOT NULL, used_at TEXT);
@@ -69,6 +69,9 @@ const PRODUCT_DDL = `
   CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, agent_id TEXT NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL, engine TEXT NOT NULL, instructions TEXT NOT NULL, status TEXT NOT NULL, token_hash TEXT, token_expires_at TEXT, requested_by TEXT, schedule_id TEXT, progress TEXT NOT NULL DEFAULT '[]', result TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS tasks_token ON tasks (token_hash);
   CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, agent_id TEXT NOT NULL, name TEXT NOT NULL, instructions TEXT NOT NULL, spec TEXT NOT NULL, next_run_at TEXT NOT NULL, last_run_at TEXT, enabled INTEGER NOT NULL DEFAULT 1, created_by TEXT NOT NULL, created_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS team_messages (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, from_kind TEXT NOT NULL, from_id TEXT, to_kind TEXT, to_id TEXT, text TEXT NOT NULL, task_id TEXT, from_task_id TEXT, root_id TEXT NOT NULL, depth INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS team_messages_ws ON team_messages (workspace_id, created_at);
+  CREATE INDEX IF NOT EXISTS team_messages_task ON team_messages (task_id);
 `;
 
 /** Raw better-sqlite3 handle, for the few places that want plain synchronous SQL. */

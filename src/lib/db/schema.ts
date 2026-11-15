@@ -225,6 +225,28 @@ export const schedules = sqliteTable("schedules", {
   createdAt: text("created_at").notNull(),
 });
 
+// ───────────── team: agents and people handing work to each other ─────────────
+
+/**
+ * The team feed: every @mention made with the `mention` tool (agent → agent or agent → person) and every reply a
+ * mentioned agent posts back. A mention of an agent starts a task for it (task_id). root_id / depth follow one chain
+ * of hand-offs so the guards can stop agents looping without a person.
+ */
+export const teamMessages = sqliteTable("team_messages", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  fromKind: text("from_kind").notNull(), // agent | member | cosign
+  fromId: text("from_id"),
+  toKind: text("to_kind"), // agent | member | null (a reply to the team)
+  toId: text("to_id"),
+  text: text("text").notNull(),
+  taskId: text("task_id"), // the task this mention started for the agent it names
+  fromTaskId: text("from_task_id"), // the run that made this message
+  rootId: text("root_id").notNull(),
+  depth: integer("depth").notNull().default(0), // agent-to-agent hand-offs in a row in this chain
+  createdAt: text("created_at").notNull(),
+});
+
 export type WorkspaceRow = typeof workspaces.$inferSelect;
 export type RoleRow = typeof roles.$inferSelect;
 export type MemberRow = typeof members.$inferSelect;
@@ -234,3 +256,4 @@ export type ApprovalRow = typeof approvalRequests.$inferSelect;
 export type ConnectionRow = typeof grokbotConnections.$inferSelect;
 export type TaskRow = typeof tasks.$inferSelect;
 export type ScheduleRow = typeof schedules.$inferSelect;
+export type TeamMessageRow = typeof teamMessages.$inferSelect;
