@@ -62,7 +62,8 @@ export function requestFunds(o: { workspaceId: string; agentId: string; memberId
     fromId: o.agentId,
     toKind: "member",
     toId: asked.id,
-    text: `The treasury needs about $${o.amountUsd.toFixed(2)}: ${reason}. Add funds? (funding request ${requestId})`,
+    // for a person: the amount and why (the card in the chat carries the request itself)
+    text: `The treasury needs about $${o.amountUsd.toFixed(2)}: ${reason.replace(/[.\s]+$/, "")}. Add funds?`,
     taskId: null,
     fromTaskId: o.taskId ?? null,
     rootId: id("chain"),

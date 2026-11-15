@@ -566,7 +566,7 @@ export const TOOLS: ToolDef[] = [
     description:
       "Ask a person to add money to the company treasury when it is too short for what's needed (e.g. payments waiting). It @mentions an approver in the team feed with a funding request; they buy USDC into the treasury through Circle's onramp. " +
       "You never buy crypto or see payment details yourself, and the money always goes to the treasury.",
-    parameters: obj({ amount_usd: str("how much the treasury needs, e.g. '5.40'"), reason: str("why: what is waiting and what is short") }, ["amount_usd", "reason"]),
+    parameters: obj({ amount_usd: str("how much the treasury needs, e.g. '5.40'"), reason: str("why, in one sentence a person reads: what is waiting and what is short. If it mentions the balance, read it with get_balances first; never guess it") }, ["amount_usd", "reason"]),
     run: async (c, a) => {
       const s = teamScope(c);
       const { requestFunds } = await import("../server/funding");

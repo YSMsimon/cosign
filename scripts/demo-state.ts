@@ -19,14 +19,16 @@
  *
  * What restore does: cancels drafts made since the save that are still open (as the agent that drafted them; a paid
  * payment stays paid, the chain can't be rewound), puts the files and rows back, retires agents made since the save
- * (e.g. the Treasury Analyst from the last take), and tops up Payables' wallet and Gateway balance.
+ * (e.g. the Treasury Analyst from the last take), rewinds the agents' spend counters (the daily draft total and the
+ * speed limit would otherwise refuse after a few takes; the payments themselves stay onchain), and tops up Payables'
+ * wallet and Gateway balance.
  * Run it with nobody mid-turn. Old files go to ~/.Trash, never deleted.
  */
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { eq } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import { createWalletClient, erc20Abi, http, parseUnits, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { arcTestnet, cancelProposal, chain, fmt, readProposal, RECEIPT_POLL_MS, USDC, usdcBalance } from "../src/lib/arc";
@@ -98,8 +100,10 @@ function rooms(name: string) {
 async function save(name: string) {
   const ws = company();
   const dir = join(ROOT, name);
+  const keptRooms = existsSync(join(dir, "browser.json")) ? readFileSync(join(dir, "browser.json"), "utf8") : null;
   if (existsSync(dir)) toTrash(dir, `snapshot-${name}`); // a re-save replaces the old one (kept in the Trash)
   mkdirSync(dir, { recursive: true });
+  if (keptRooms) writeFileSync(join(dir, "browser.json"), keptRooms); // the rooms from the last save, until `rooms` replaces them
   const rows = rowsOf(ws.id);
   for (const a of rows.agents) {
     const src = parts(a.ref);
@@ -115,7 +119,9 @@ async function save(name: string) {
   writeFileSync(join(dir, "rows.json"), JSON.stringify(rows, null, 2));
   console.log(`saved "${name}": ${rows.agents.length} agents, ${rows.tasks.length} jobs, ${rows.teamMessages.length} team messages, ${count} proposals so far → ${dir}`);
   execFileSync("pbcopy", { input: roomsCopyLine(ws.id) });
-  console.log(`rooms live in your browser: a console line is on your clipboard. Paste it into the browser console on localhost:3000, then run: demo-state.ts rooms ${name}`);
+  console.log(
+    `${keptRooms ? "kept the rooms from the last save. To save the rooms as they are now: " : "rooms live in your browser: "}a console line is on your clipboard. Paste it into the browser console on localhost:3000, then run: demo-state.ts rooms ${name}`,
+  );
 }
 
 async function restore(name: string) {
@@ -166,6 +172,12 @@ async function restore(name: string) {
     swap(schema.teamMessages, saved.teamMessages);
     swap(schema.approvalRequests, saved.approvalRequests);
     swap(schema.fundingRequests, saved.fundingRequests);
+    // the limits' counters as they were at the save (a take's drafts and calls would otherwise count against the next)
+    if (saved.agents.length) {
+      tx.delete(schema.agentSpend)
+        .where(and(inArray(schema.agentSpend.agentId, saved.agents.map((a) => a.id)), gt(schema.agentSpend.createdAt, meta.savedAt)))
+        .run();
+    }
   });
   console.log(`2. rows back: ${saved.tasks.length} jobs, ${saved.teamMessages.length} team messages, ${saved.members.length} members, ${saved.contacts.length} contacts; agent settings as saved`);
 
@@ -215,6 +227,16 @@ async function restore(name: string) {
     execFileSync("pbcopy", { input: js });
     console.log("5. rooms: a console line is on your clipboard; paste it into the browser console on localhost:3000");
   } else console.log("5. no browser.json in this snapshot: rooms stay as they are in the browser");
+  // Oliver's weekly invoices (122+): the next one no proposal has named yet, for Emma to ask about in this take
+  const used = new Set<number>();
+  const total = Number(await chain.readContract({ address: t, abi: companyTreasuryAbi, functionName: "proposalCount" }));
+  for (let pid = 0; pid < total; pid++) {
+    const m = /invoice\s*#?(\d+)/i.exec((await readProposal(t, BigInt(pid))).memo);
+    if (m) used.add(Number(m[1]));
+  }
+  let fresh = 122;
+  while (used.has(fresh)) fresh++;
+  console.log(`6. Emma's beat this take: "Read invoice ${fresh}, check Oliver's address with the vendor check, and draft the payment."`);
   console.log(`\nrestored "${name}" (saved ${meta.savedAt}). Reload the app in both windows.`);
 }
 

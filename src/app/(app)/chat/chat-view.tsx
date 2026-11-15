@@ -27,7 +27,7 @@ import { CallWords } from "../../mockups/v2/call-words";
 import { AgentOrb } from "../../mockups/v2/parts";
 import { RoomView } from "../../mockups/v2/room-view";
 import { InviteTeammateDialog, JoinRoomDialog, ME, NewRoomDialog, RoomList } from "../../mockups/v2/rooms";
-import { useAgents as useSampleAgents, useRooms, useTeam as useSampleTeam } from "../../mockups/v2/store";
+import { SAMPLE_ROOM_IDS, sampleRoomsOn, useAgents as useSampleAgents, useRooms, useTeam as useSampleTeam } from "../../mockups/v2/store";
 import { aboutInfo, hueOf, useAgentsData } from "../agents-data";
 import { AppShell, initialsOf } from "../app-shell";
 import { useCosign, useLive } from "../cosign";
@@ -53,7 +53,10 @@ export function ChatView() {
   const params = useSearchParams();
   const { wsId, ws, can, address } = useCosign();
   const agentsData = useAgentsData();
-  const { rooms: savedRooms, add: addRoom, addMembers, remove: removeRoom } = useRooms();
+  const { rooms: allRooms, add: addRoom, addMembers, remove: removeRoom } = useRooms();
+  // not the design board's made-up rooms: a new browser (a teammate's, a judge's) would show them as if they were real
+  // (the rooms list renders only after the client has loaded you, so reading localStorage here can't mismatch the server)
+  const savedRooms = sampleRoomsOn() ? allRooms : allRooms.filter((r) => !SAMPLE_ROOM_IDS.has(r.id));
   const { team: sampleTeam } = useSampleTeam();
   const { agents: sampleAgents } = useSampleAgents();
   const agents = agentsData.usable;

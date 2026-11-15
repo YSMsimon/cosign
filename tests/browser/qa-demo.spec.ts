@@ -160,6 +160,7 @@ test("QA: the demo, beat by beat, with screenshots", async ({ page, context }) =
     await snap(page, "people-roles", "invited a teammate and made them an approver");
 
     // 9. a room: the agent answers in the room's own thread; @Grok Bot takes a background job
+    await page.addInitScript(() => localStorage.setItem("cosign-sample-rooms", "1")); // the board's #finance, hidden in the app otherwise
     await page.goto("/chat?room=finance");
     const box = page.getByPlaceholder(/^Message finance/);
     const roomAsk = async (who: string, rest: string) => {

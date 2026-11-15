@@ -107,6 +107,16 @@ function createStore<T>(key: string, fallback: T) {
 const agentsStore = createStore<Agent[]>("cosign-mock-agents", DEFAULT_AGENTS);
 const linesStore = createStore<Record<string, Line[]>>("cosign-mock-lines", DEFAULT_LINES);
 const roomsStore = createStore<Room[]>("cosign-mock-rooms", DEFAULT_ROOMS);
+/** The design board's sample rooms (#finance, #payroll): a new browser starts with them; the real app hides them. */
+export const SAMPLE_ROOM_IDS = new Set(DEFAULT_ROOMS.map((r) => r.id));
+/** Browser tests bring them back with localStorage cosign-sample-rooms = "1" (they exercise rooms without making one). */
+export function sampleRoomsOn(): boolean {
+  try {
+    return localStorage.getItem("cosign-sample-rooms") === "1";
+  } catch {
+    return false;
+  }
+}
 const teamStore = createStore<Teammate[]>("cosign-mock-team", DEFAULT_TEAM);
 
 export function useAgents() {

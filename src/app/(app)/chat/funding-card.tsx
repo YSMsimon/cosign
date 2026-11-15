@@ -25,7 +25,7 @@ export function FundingCard({ requestId }: { requestId: string }) {
   return (
     <ApprovalRow
       title={`Add ${usd(r.amountUsd)} to the treasury?`}
-      description={`${r.reason}. You pay in Circle's onramp (sandbox on testnet); the USDC goes to the treasury.`}
+      description={`${r.reason.replace(/[.\s]+$/, "")}. You pay in Circle's onramp (sandbox on testnet); the USDC goes to the treasury.`}
       address={{ value: ws.treasury.address, label: "the treasury's address" }}
       decision={decided}
       waiting={r.status === "pending" && !mayAdd ? "Waiting for an approver to add funds." : undefined}

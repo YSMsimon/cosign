@@ -97,7 +97,7 @@ function ProposalCard({ pid }: { pid: number }) {
   return (
     <ApprovalRow
       title={`Approve ${usd(p.amountUsd)} to ${name}?`}
-      description={`Proposal #${p.id} · you sign in your own wallet`}
+      description={`Proposal #${p.id} · ${p.you.canCosign || p.you.approved ? "you sign in your own wallet" : "an approver signs it in their own wallet"}`}
       address={{ value: p.to, label: `${name}'s wallet address` }}
       decision={decided}
       waiting={waiting}

@@ -23,6 +23,7 @@ test("Rooms: an agent named in a room answers for real in the room's own thread,
   const owner = personFromKey("owner", s.ownerKey);
   const tag = Date.now();
 
+  await page.addInitScript(() => localStorage.setItem("cosign-sample-rooms", "1")); // the board's #finance, hidden in the app otherwise
   await signInThroughUi(page, owner.account);
   await page.goto("/chat?room=finance");
   await expect(page.getByText("Lena sent invoice 120 for the frontend work.")).toBeVisible({ timeout: 60_000 }); // the room's sample

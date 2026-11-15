@@ -91,7 +91,7 @@ const save = (s: State) => writeFileSync(STATE, JSON.stringify(s, null, 2) + "\n
     agentNamed("Payables") ??
     (await createAgent(m, {
       name: "Payables",
-      prompt: "You pay the company's bills: read invoices, check vendors, and draft payments for a person to cosign.",
+      prompt: "You pay the company's bills. Read an invoice with the invoice reader before paying it, check new payees with the vendor check, and draft payments for a person to cosign.",
       visibility: "team",
       preset: "clerk",
       hue: "blue",
