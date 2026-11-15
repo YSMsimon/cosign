@@ -27,11 +27,14 @@ export async function checkReachable(base: string) {
 }
 
 /** The "Nova Labs" demo workspace, the Test CFO's membership in it, and one of its active agents. */
+/** The demo company (DEMO_COMPANY, default Nova Labs), acting as the Test CFO, or as your wallet where the CFO isn't a member. */
 export function demo(agentName: string) {
-  const ws = db().select().from(schema.workspaces).where(eq(schema.workspaces.name, "Nova Labs")).get();
-  if (!ws) throw new Error("no demo workspace: run pnpm tsx --env-file=.env.local scripts/seed-demo.ts");
-  const m = loadMembership(wallet("test-cfo").address.toLowerCase(), ws.id);
-  if (!m) throw new Error("the Test CFO is not a member of the demo workspace");
+  const company = process.env.DEMO_COMPANY ?? "Nova Labs";
+  const ws = db().select().from(schema.workspaces).where(eq(schema.workspaces.name, company)).get();
+  if (!ws) throw new Error(`no workspace "${company}": run scripts/seed-demo.ts (Nova Labs) or scripts/seed-org.ts`);
+  const owner = process.env.COSIGN_OWNER_ADDRESS?.toLowerCase();
+  const m = loadMembership(wallet("test-cfo").address.toLowerCase(), ws.id) ?? (owner ? loadMembership(owner, ws.id) : null);
+  if (!m) throw new Error(`neither the Test CFO nor COSIGN_OWNER_ADDRESS is a member of ${company}`);
   const agents = db().select().from(schema.agents).where(and(eq(schema.agents.workspaceId, ws.id), eq(schema.agents.status, "active"))).all();
   const agent = agents.find((a) => a.name.toLowerCase() === agentName.toLowerCase());
   if (!agent) throw new Error(`no agent "${agentName}" in ${ws.name}; there are: ${agents.map((a) => a.name).join(", ")}`);

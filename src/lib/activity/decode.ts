@@ -6,6 +6,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { decodeEventLog, formatUnits, type Hex } from "viem";
 import { companyTreasuryAbi, treasuryFactoryAbi, TREASURY_FACTORY_ADDRESS } from "../contracts/abis";
+import { db, schema } from "../db";
 import type { NewActivity } from "../db/schema";
 import { ARC_SYSTEM_EMITTER, TRANSFER_TOPIC } from "../quicknode/filter";
 
@@ -24,7 +25,7 @@ const usd6 = (v: bigint) => formatUnits(v, 6);
 const usd18 = (v: bigint) => formatUnits(v, 18);
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
-/** Known names for addresses (our wallets, treasury, demo payees). */
+/** Known names for addresses: our wallets, each company's treasury, agents and saved contacts. */
 export function addressBook(): Map<string, string> {
   const m = new Map<string, string>();
   const add = (a: string | undefined, name: string) => a && m.set(a.toLowerCase(), name);
@@ -32,7 +33,13 @@ export function addressBook(): Map<string, string> {
     for (const w of JSON.parse(readFileSync("data/wallets.local.json", "utf8")).wallets as { address: string; name: string }[]) add(w.address, w.name);
   }
   if (existsSync("data/treasury.local.json")) add(JSON.parse(readFileSync("data/treasury.local.json", "utf8")).treasury, "Nova Labs treasury");
-  add(process.env.DEPLOYER_ADDRESS, "Lena (contractor)");
+  try {
+    for (const w of db().select({ name: schema.workspaces.name, treasury: schema.workspaces.treasury }).from(schema.workspaces).all()) add(w.treasury, `${w.name} treasury`);
+    for (const a of db().select({ name: schema.agents.name, wallet: schema.agents.walletAddress }).from(schema.agents).all()) add(a.wallet ?? undefined, a.name);
+    for (const c of db().select({ name: schema.contacts.name, address: schema.contacts.address }).from(schema.contacts).all()) add(c.address, c.name);
+  } catch {
+    /* no database here: the file-based names still apply */
+  }
   add(process.env.SELLER_ADDRESS, "Demo API seller");
   add("0x0077777d7EBA4688BDeF3E311b846F25870A19B9", "Circle Gateway");
   add(TREASURY_FACTORY_ADDRESS, "Treasury factory");

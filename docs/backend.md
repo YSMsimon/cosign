@@ -143,7 +143,10 @@ treasury payment executed, or USDC coming into the treasury, starts a Grok Bot j
 that drafted it, or any agent with a connected routine, to check it (the payee and invoice; or who sent the money) and
 hand anything wrong to a person or agent. Only fresh rows (the QuickNode Stream's, or Arc reads under 10 minutes old),
 one job per event, at most 6 per company per 10 minutes. The job shows in the agent's chat for everyone who sees it,
-under an "Onchain · …" line.
+under an "Onchain · …" line that names the payee from the company's contacts. No person asked for a watch job, so it
+runs as a watch actor (`taskActor` in grokbot.ts, `Actor.watch` in chat.ts): it may pay to read (an invoice, a vendor
+check) within the agent's own purchase limits, and can never draft or draw petty cash. It reports a mismatch with the
+amount missing or overpaid and mentions a person; what to do about it stays a person's call.
 
 `GET /workspaces/:ws/activity` answers from what's stored, and starts a background read of anything new on Arc for
 that treasury (its own events, and USDC moving in or out of it through Arc's system emitter), decoded with the
@@ -343,10 +346,16 @@ and runs only while its creator can still use the agent.
 ```bash
 pnpm dev
 pnpm tsx --env-file=.env.local scripts/seed-demo.ts   # demo treasury → "Nova Labs" workspace (COSIGN_OWNER_ADDRESS adds your wallet)
+pnpm tsx --env-file=.env.local scripts/seed-org.ts    # the video's company: a new treasury "Simon's Org" (your wallet the only
+                                                      # approver), contacts, Payables + Controller; safe to re-run
+pnpm tsx --env-file=.env.local scripts/demo-state.ts save|rooms|restore|list <name>
+                                                      # snapshot the demo company (conversations, jobs, settings, rooms) and put
+                                                      # it back before a retake; open drafts since the save are cancelled
 pnpm tsx --env-file=.env.local scripts/scheduler.ts   # optional: local cron
 ```
 
-Grok Bot from the terminal (acts as the demo Test CFO; needs a public URL, PUBLIC_BASE_URL or a running ngrok tunnel):
+Grok Bot from the terminal (acts as the demo Test CFO, or as your wallet where the CFO isn't a member; DEMO_COMPANY picks
+the company, default Nova Labs; needs a public URL, PUBLIC_BASE_URL or a running ngrok tunnel):
 
 ```bash
 pnpm grokbot setup                      # copies the setup message; paste it into one Bot's own chat

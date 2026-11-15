@@ -2,6 +2,8 @@
  * One line per thing the agent did, in plain words, from the tool's name, its arguments and its result (the same
  * record the thread keeps). Used for a finished turn and, while a turn runs, for each step as it arrives.
  */
+import { paidLine, sellerName } from "@/lib/x402/label";
+
 type Args = Record<string, unknown>;
 type Result = Record<string, unknown> | null;
 
@@ -12,13 +14,6 @@ const usd = (x: unknown) => {
 const short = (a: unknown) => {
   const s = String(a ?? "");
   return /^0x[0-9a-fA-F]{40}$/.test(s) ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
-};
-const host = (u: unknown) => {
-  try {
-    return new URL(String(u)).host;
-  } catch {
-    return String(u ?? "an API");
-  }
 };
 
 /** What a tool call did, without its outcome. */
@@ -33,8 +28,8 @@ function doing(name: string, a: Args, r: Result): string {
     case "discover_services":
       return a.query ? `Looked for paid APIs: ${a.query}` : "Looked for paid APIs";
     case "paid_fetch": {
-      const paid = r?.paid as { amountUsd?: unknown } | undefined;
-      return paid ? `Paid ${usd(paid.amountUsd)} for ${host(a.url)}` : `Called ${host(a.url)}`;
+      const paid = r?.paid as { amountUsd?: unknown; rail?: unknown } | undefined;
+      return paid ? paidLine(a.url, paid) : `Called ${sellerName(a.url)}`;
     }
     case "propose_payment":
       return r?.proposalId !== undefined ? `Drafted proposal #${r.proposalId} · ${usd(a.amount_usd)} to ${short(a.to)}` : `Drafted ${usd(a.amount_usd)} to ${short(a.to)}`;

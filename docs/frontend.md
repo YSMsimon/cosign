@@ -23,6 +23,11 @@ The boards stay as they were (sample data in the browser) for design work.
   and opens one live stream per page (`/workspaces/:ws/activity/stream`). Each live event refreshes what it touched
   (`activity`, `proposal.drafted`, `team.message`) and tells the screens (`useLive`). Signed out → `/sign-in`. Loading,
   error and "not in a workspace yet" states use the library components; a failed refresh keeps what's on screen.
+- Agent text (chat, rooms, Grok Bot jobs) is markdown, drawn by Streamdown (`Said` in `mockups/v2/mentions.tsx`):
+  @mentions and citations go in as in-page links that come back out as their chips; wallet addresses and transaction
+  hashes are shortened for reading (0x1234…abcd, display only). Tailwind scans Streamdown's real folder under
+  `node_modules/.pnpm` (`globals.css`), so that line names its version. Approval cards keep Approve/Deny under the
+  text, so a narrow chat column (details panel open) still reads.
 
 ## Screens
 

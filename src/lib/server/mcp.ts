@@ -17,7 +17,7 @@ import { db, schema } from "../db";
 import type { AgentRow, TaskRow } from "../db/schema";
 import type { Membership } from "./access";
 import { runContext } from "./chat";
-import { actorFor, BOT_TOOLS, recordToolCall, requireConnectRight } from "./grokbot";
+import { actorFor, BOT_TOOLS, recordToolCall, requireConnectRight, taskActor } from "./grokbot";
 import { HttpError } from "./http";
 import { id, newToken, sha256 } from "./util";
 
@@ -116,10 +116,10 @@ async function answer(c: ReturnType<typeof caller>, msg: Rpc) {
       const task = openTask(c.agent.id, args.task_id);
       delete args.task_id;
       // inside a job: the rights of the person who asked for it, and the job's chain; outside: the token's member
-      const actor = actorFor(task ? task.requestedBy : c.token.memberId);
+      const actor = task ? taskActor(task) : actorFor(c.token.memberId);
       const { ctx } = await runContext(c.agent, c.ws, actor, { taskId: task?.id ?? null, vm: false });
       const res = await runToolChecked(ctx, name, args, BOT_TOOLS);
-      if (task) recordToolCall(task.id, `${name} (MCP)`, res);
+      if (task) recordToolCall(task.id, `${name} (MCP)`, res, args);
       if (res.status === "error" && res.error === "unknown tool") return fail(rid, -32602, `unknown tool: ${name}`);
       return ok(rid, { content: [{ type: "text", text: JSON.stringify(res.output) }], isError: res.status !== "ok" });
     }

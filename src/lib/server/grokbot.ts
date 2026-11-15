@@ -19,6 +19,7 @@ import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import { runToolChecked, toolsFor } from "../agent/tools";
 import { rulesMarkdown } from "../agent/rules";
 import { db, schema } from "../db";
+import { paidLine } from "../x402/label";
 import type { AgentRow, ConnectionRow, TaskRow, WorkspaceRow } from "../db/schema";
 import { can } from "../perm/permissions";
 import type { Membership } from "./access";
@@ -174,6 +175,9 @@ export function setTask(taskId: string, set: Partial<TaskRow>) {
   return db().select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).get()!;
 }
 
+/** A task's actor: the person who asked, or for a job started by an onchain event, a read-only watch (see Actor). */
+export const taskActor = (task: TaskRow): Actor => (task.source === "watch" ? { memberId: null, permissions: [], watch: true } : actorFor(task.requestedBy));
+
 export function actorFor(memberId: string | null): Actor {
   if (!memberId) return { memberId: null, permissions: [] };
   const row = db()
@@ -235,13 +239,15 @@ export async function startTask(
     try {
       const thread = task.scheduleId ? `s-${task.scheduleId.toLowerCase()}` : `t-${task.id.toLowerCase()}`;
       // keep each tool call on the task, the same way a Grok Bot job's calls are kept
+      let lastArgs: Record<string, unknown> = {};
       const onEvent = (type: string, d: Record<string, unknown>) => {
         const tool = String(d.tool ?? "");
-        if (type === "tool_result") recordToolCall(task.id, tool, { status: "ok" });
+        if (type === "tool_call") lastArgs = (d.args as Record<string, unknown>) ?? {};
+        else if (type === "tool_result") recordToolCall(task.id, tool, { status: "ok", output: d.result }, lastArgs);
         else if (type === "policy_refused") recordToolCall(task.id, tool, { status: "refused", reason: String(d.reason ?? "") });
         else if (type === "tool_error") recordToolCall(task.id, tool, { status: "error", error: String(d.error ?? "") });
       };
-      const r = await runTurn(agent, ws, actorFor(task.requestedBy), thread.replace(/[^a-z0-9_-]/g, ""), task.instructions, onEvent, task.id);
+      const r = await runTurn(agent, ws, taskActor(task), thread.replace(/[^a-z0-9_-]/g, ""), task.instructions, onEvent, task.id);
       recordAgentReply(setTask(task.id, { status: "done", result: r.finalText }), r.finalText);
     } catch (e) {
       const msg = (e as Error).message;
@@ -298,7 +304,7 @@ export function botScope(task: TaskRow) {
   const agent = db().select().from(schema.agents).where(eq(schema.agents.id, task.agentId)).get();
   const ws = db().select().from(schema.workspaces).where(eq(schema.workspaces.id, task.workspaceId)).get();
   if (!agent || !ws || agent.status !== "active") throw notFound("agent not available");
-  return { agent, ws, actor: actorFor(task.requestedBy) };
+  return { agent, ws, actor: taskActor(task) };
 }
 
 export async function botContext(task: TaskRow) {
@@ -318,19 +324,22 @@ export async function botContext(task: TaskRow) {
  * Every tool call a Grok Bot job makes (through the tool API or MCP) is kept on the task as a step of kind "tool",
  * next to the Bot's own progress notes, so the page and the evals can see what it actually did.
  */
-export function recordToolCall(taskId: string, name: string, res: { status: string; reason?: string; error?: string }) {
+export function recordToolCall(taskId: string, name: string, res: { status: string; reason?: string; error?: string; output?: unknown }, args: Record<string, unknown> = {}) {
   const t = db().select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).get();
   if (!t) return;
   const progress = JSON.parse(t.progress) as { t: string; message: string; kind?: string }[];
   const detail = res.status === "refused" ? `refused: ${res.reason}` : res.status === "error" ? `error: ${res.error}` : "ok";
-  db().update(schema.tasks).set({ progress: JSON.stringify([...progress, { t: now(), kind: "tool", message: `${name} · ${detail}` }]) }).where(eq(schema.tasks.id, taskId)).run();
+  // a paid call says what it paid and how, the same line the chat shows ("Paid $0.01 by nanopayment · invoice reader")
+  const paid = res.status === "ok" && name.startsWith("paid_fetch") ? (res.output as { paid?: { rail?: unknown; amountUsd?: unknown } } | null)?.paid : undefined;
+  const message = paid ? paidLine(args.url, paid) : `${name} · ${detail}`;
+  db().update(schema.tasks).set({ progress: JSON.stringify([...progress, { t: now(), kind: "tool", message }]) }).where(eq(schema.tasks.id, taskId)).run();
 }
 
 export async function botTool(task: TaskRow, name: string, args: Record<string, unknown>) {
   const { agent, ws, actor } = botScope(task);
   const { ctx } = await runContext(agent, ws, actor, { taskId: task.id, vm: false });
   const res = await runToolChecked(ctx, name, args, BOT_TOOLS);
-  recordToolCall(task.id, name, res);
+  recordToolCall(task.id, name, res, args);
   if (res.status === "refused") throw new HttpError(403, res.reason);
   if (res.status === "error") throw new HttpError(502, res.error);
   return { output: res.output };

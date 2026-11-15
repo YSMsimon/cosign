@@ -119,7 +119,8 @@ export function ChainEvent({ icon, children }: { icon: React.ReactNode; children
   return (
     <Marker variant="separator">
       <MarkerIcon>{icon}</MarkerIcon>
-      <MarkerContent>{children}</MarkerContent>
+      {/* may shrink and wrap: a long event line ("…, seen by QuickNode") would otherwise run out of the column */}
+      <MarkerContent className="group-data-[variant=separator]/marker:flex-initial">{children}</MarkerContent>
     </Marker>
   );
 }

@@ -20,12 +20,18 @@ import { memberAccess, type Membership } from "./access";
 import { accessOf, rulesOf } from "./agents";
 import { conflict, forbidden } from "./http";
 
-export type Actor = { memberId: string | null; permissions: readonly string[] };
+/**
+ * Who a run acts for. `watch`: a job Grok Bot started itself when money moved onchain (no person asked). It may pay
+ * to read (an invoice, a vendor check) within the agent's own purchase limits, and never draft or draw petty cash:
+ * what to do about a payment is a person's call.
+ */
+export type Actor = { memberId: string | null; permissions: readonly string[]; watch?: boolean };
 
 /** Everything one run needs. `vm: false` skips the microVM (Grok Bot calls, folder-only work). */
 export async function runContext(agent: AgentRow, ws: WorkspaceRow, actor: Actor, o: { taskId?: string | null; vm?: boolean } = {}) {
   const rules = rulesOf(agent);
-  const abilities = effectiveAbilities(rules, { canRequestPayments: can(actor.permissions, "payments.request") });
+  const full = effectiveAbilities(rules, { canRequestPayments: actor.watch || can(actor.permissions, "payments.request") });
+  const abilities = actor.watch ? { ...full, draft: false, pettyCash: false } : full;
   const payees = payeesOf(ws.id, rules.controls.allowedPayees);
   const files = {
     "policy.md": rulesMarkdown(agent.name, { abilities, controls: rules.controls }, payees),

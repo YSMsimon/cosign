@@ -333,25 +333,10 @@ export function ApprovalRow({
   }
   const steps = run ? (run.yes ? pending : denySteps) : [];
   const label = run ? (steps[run.step] ?? (run.yes ? "Working…" : "Denying…")) : null;
+  // the buttons sit under the text, not in the Alert's action slot: in a narrow chat column (the details panel open)
+  // the slot keeps its full width and squeezed the text to a letter per line
   return (
-    <Alert
-      variant="warning"
-      severityLabel="Needs your approval"
-      action={
-        label ? (
-          <Spinner size="sm" label={label} className="mx-3 text-muted-foreground" />
-        ) : waiting ? undefined : (
-          <span className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => decide(false)}>
-              Deny
-            </Button>
-            <Button size="sm" onClick={() => decide(true)}>
-              Approve
-            </Button>
-          </span>
-        )
-      }
-    >
+    <Alert variant="warning" severityLabel="Needs your approval" action={label ? <Spinner size="sm" label={label} className="mx-1 text-muted-foreground" /> : undefined}>
       <AlertTitle>{title}</AlertTitle>
       <AlertDescription aria-live="polite">
         {label ? (
@@ -365,6 +350,16 @@ export function ApprovalRow({
           </>
         )}
       </AlertDescription>
+      {!label && !waiting && (
+        <span className="mt-2 flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" onClick={() => decide(false)}>
+            Deny
+          </Button>
+          <Button size="sm" onClick={() => decide(true)}>
+            Approve
+          </Button>
+        </span>
+      )}
     </Alert>
   );
 }

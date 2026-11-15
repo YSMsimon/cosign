@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment } from "react";
+import { Streamdown } from "streamdown";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -173,19 +173,47 @@ function splitter(members: Member[]) {
   return new RegExp(`(${named}@[\\w-]+|\\[\\[[\\w-]+\\]\\])`, "gi");
 }
 
+/** A wallet address or transaction hash in a message, shortened for reading (0x1234…abcd). Display only. */
+const shortHex = (t: string) => t.replace(/(?<![0-9a-fA-Fx])0x(?:[0-9a-fA-F]{64}|[0-9a-fA-F]{40})(?![0-9a-fA-F])/g, (h) => `${h.slice(0, 6)}…${h.slice(-4)}`);
+
+/**
+ * The text is markdown (agents write lists and bold), drawn by Streamdown. Mentions and citations go in as in-page
+ * links ("#mention-2", "#cite-payee") that the link renderer turns back into their chips.
+ */
 export function Said({ text, members }: { text: string; members: Member[] }) {
-  const parts = text.split(splitter(members));
+  const md = shortHex(text)
+    .split(splitter(members))
+    .map((p) => {
+      if (p.startsWith("@")) {
+        const i = members.findIndex((x) => x.name.toLowerCase() === p.slice(1).toLowerCase());
+        if (i >= 0) return `[${p}](#mention-${i})`;
+      }
+      const cite = /^\[\[([\w-]+)\]\]$/.exec(p);
+      if (cite && SOURCES[cite[1]]) return `[${cite[1]}](#cite-${cite[1]})`;
+      return p;
+    })
+    .join("");
   return (
-    <>
-      {parts.map((p, i) => {
-        if (p.startsWith("@")) {
-          const m = members.find((x) => x.name.toLowerCase() === p.slice(1).toLowerCase());
-          if (m) return <MentionChip key={i} m={m} />;
-        }
-        const cite = /^\[\[([\w-]+)\]\]$/.exec(p);
-        if (cite && SOURCES[cite[1]]) return <Citation key={i} source={SOURCES[cite[1]]} />;
-        return <Fragment key={i}>{p}</Fragment>;
-      })}
-    </>
+    <Streamdown
+      className="space-y-3 [&_li]:my-0.5 [&_ol]:my-1 [&_ul]:my-1"
+      controls={false}
+      components={{
+        // a paragraph is a div: a mention chip holds the agent's orb (a div), which a <p> may not contain
+        p: ({ children }) => <div>{children}</div>,
+        a: ({ href, children }) => {
+          const mention = /^#mention-(\d+)$/.exec(href ?? "");
+          if (mention && members[Number(mention[1])]) return <MentionChip m={members[Number(mention[1])]} />;
+          const cite = /^#cite-([\w-]+)$/.exec(href ?? "");
+          if (cite && SOURCES[cite[1]]) return <Citation source={SOURCES[cite[1]]} />;
+          return (
+            <a href={href} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+              {children}
+            </a>
+          );
+        },
+      }}
+    >
+      {md}
+    </Streamdown>
   );
 }

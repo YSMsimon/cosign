@@ -3,6 +3,10 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist/wght.css";
 @import "@fontsource-variable/geist-mono/wght.css";
+/* Streamdown's classes (agent messages as markdown). pnpm links node_modules/streamdown into .pnpm, and the scanner
+   doesn't follow that link, so the real folder is named too; update the version here when streamdown is upgraded. */
+@source "../../node_modules/streamdown/dist/*.js";
+@source "../../node_modules/.pnpm/streamdown@2.7.1_react-dom@19.3.0_react@19.3.0__react@19.3.0/node_modules/streamdown/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 

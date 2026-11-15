@@ -4,8 +4,9 @@ import { requirePayment } from "@/lib/x402/seller";
 // Stand-in for a real OCR/invoice-parsing service an agent would buy per request.
 const INVOICES: Record<string, { vendor: string; amountUsd: string; due: string; memo: string }> = {
   "118": { vendor: "Pixel Studio", amountUsd: "1.50", due: "2026-11-20", memo: "Logo + brand kit, milestone 2" },
-  "119": { vendor: "CloudCo", amountUsd: "0.80", due: "2026-11-22", memo: "Hosting, November" },
-  "120": { vendor: "Lena (contractor)", amountUsd: "2.40", due: "2026-11-21", memo: "Frontend work, week 46" },
+  "119": { vendor: "Northpine Hosting Inc.", amountUsd: "0.08", due: "2026-10-22", memo: "Hosting, October" },
+  "120": { vendor: "Oliver Grant (contractor)", amountUsd: "2.40", due: "2026-11-21", memo: "Frontend work, week 46" },
+  "121": { vendor: "Northpine Hosting Inc.", amountUsd: "0.80", due: "2026-11-22", memo: "Hosting, November" },
 };
 
 export async function GET(req: Request) {
