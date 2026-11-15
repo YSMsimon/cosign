@@ -17,9 +17,11 @@ import {
 import { Composer, type Picked } from "./composer";
 import { GROK_BOT, mentionedIn, personMember, roomMembers, Said } from "./mentions";
 import { AddressLine, EXPLORER, LENA, TREASURY } from "./money";
-import { ApprovalRow, Steps } from "./parts";
+import { ApprovalRow, Refusal, Steps } from "./parts";
 import { InviteToRoomDialog, JoinRoomEmpty, ME, RoomIcon, RoomMembers } from "./rooms";
-import { roomKey, useAgents, useLines, useRooms, useTeam, type Room } from "./store";
+import type { Agent } from "./agents";
+import { roomKey, useAgents, useLines, useRooms, useTeam, type Room, type Teammate } from "./store";
+import { Tag } from "@/components/ui/tag";
 import { AgentSaid, ChainEvent, GrokSaid, PersonSaid, Words, YouSaid } from "./thread";
 
 /* sample transactions for the contractor run (mock) */
@@ -30,21 +32,62 @@ const TX = {
 };
 const STRANGER = "0x5e3f9a1c7b2d4e6f8a0b1c3d5e7f9a2b4c6d8e0f";
 
+/** What an agent (or Grok Bot) asked in a room is doing right now, as the real app reports it. */
+export type RoomReply = {
+  title: string;
+  steps: string[];
+  text?: string;
+  error?: string;
+  running: boolean;
+  /** a Grok Bot job that runs on this agent's own loop (no routine connected): the agent's turn, tagged Background */
+  by?: string;
+};
+
+/**
+ * The real app's answer to a message in a room: run the agent it names, or start a Grok Bot job when it names Grok Bot
+ * (for the agents it names, then the room's), calling `update` as the work goes. Without it the room is the prototype
+ * and answers with sample text.
+ */
+export type RoomAsk = (
+  to: { kind: "agent"; name: string } | { kind: "grokbot"; agents: string[] },
+  text: string,
+  room: Room,
+  update: (r: RoomReply) => void,
+) => Promise<RoomReply>;
+
 /**
  * A room: a shared conversation for teammates and agents. Everyone in it sees every message; an agent answers when
  * someone names it with @, following the room's guidelines. Payments an agent drafts here are approved here too.
  * Prototype: rooms and messages live in the browser (./store).
  */
-export function RoomView({ room, files, setFiles }: { room: Room; files: Picked[]; setFiles: (update: (cur: Picked[]) => Picked[]) => void }) {
-  const { agents } = useAgents();
-  const { team } = useTeam();
+export function RoomView({
+  room,
+  files,
+  setFiles,
+  ask,
+  people,
+  scope,
+}: {
+  room: Room;
+  files: Picked[];
+  setFiles: (update: (cur: Picked[]) => Picked[]) => void;
+  ask?: RoomAsk;
+  /** the real app's agents and people (else the board's sample ones) */
+  people?: { agents: Agent[]; team: Teammate[] };
+  /** keeps this room's messages apart per workspace (the real app passes the workspace id) */
+  scope?: string;
+}) {
+  const sample = { agents: useAgents().agents, team: useTeam().team };
+  const { agents, team } = people ?? sample;
+  const key = scope ? `${scope}:${roomKey(room.id)}` : roomKey(room.id);
   const { addMembers } = useRooms();
   const { lines, say } = useLines();
   const [inviting, setInviting] = useState(false);
   const [replying, setReplying] = useState<string | null>(null);
   const [paid, setPaid] = useState(false); // prototype: approving the contractor run shows Grok Bot's onchain check
+  const [replies, setReplies] = useState<{ rid: string; author: string; reply: RoomReply }[]>([]); // real answers still coming
 
-  const extra = lines[roomKey(room.id)] ?? [];
+  const extra = lines[key] ?? [];
   const roomAgents = agents.filter((a) => room.members.includes(a.id));
   const members = roomMembers(room, team, agents);
   /* who a message can name, you included (Grok Bot may @ you) */
@@ -56,19 +99,41 @@ export function RoomView({ room, files, setFiles }: { room: Room; files: Picked[
     return <JoinRoomEmpty room={room} onJoin={() => addMembers(room.id, [ME])} />;
   }
 
+  /* the real app: the named agent answers for real (steps and words as it works), or Grok Bot takes the job */
+  const askReal = (text: string, run: RoomAsk) => {
+    const asked = mentionedIn(text, members).filter((m) => m.kind === "agent" && m.id !== GROK_BOT.id);
+    const grok = mentionedIn(text, [GROK_BOT]).length > 0;
+    if (!grok && !asked.length) return;
+    const author = grok ? GROK_BOT.id : asked[0].id;
+    const to = grok
+      ? { kind: "grokbot" as const, agents: [...new Set([...asked.map((m) => m.name), ...roomAgents.map((a) => a.name)])] }
+      : { kind: "agent" as const, name: asked[0].name };
+    const rid = `${Date.now()}-${author}`; // this reply, while it runs
+    const start: RoomReply = { title: grok ? "Handing it to Grok Bot" : "Thinking", steps: [], running: true };
+    setReplies((cur) => [...cur, { rid, author, reply: start }]);
+    const update = (reply: RoomReply) => setReplies((cur) => cur.map((x) => (x.rid === rid ? { ...x, reply } : x)));
+    void run(to, text, room, update)
+      .catch((e: Error): RoomReply => ({ ...start, running: false, error: e.message }))
+      .then((r) => {
+        say(key, { who: "agent", author, text: r.text ?? "", steps: r.steps.length ? { title: r.title, lines: r.steps } : undefined, error: r.error, by: r.by });
+        setReplies((cur) => cur.filter((x) => x.rid !== rid));
+      });
+  };
+
   const send = (text: string, picked: Picked[]) => {
-    say(roomKey(room.id), { who: "you", text, files: picked.length ? picked.map((f) => f.name) : undefined });
+    say(key, { who: "you", text, files: picked.length ? picked.map((f) => f.name) : undefined });
+    if (ask) return askReal(text, ask);
     const [first] = mentionedIn(text, members).filter((m) => m.kind === "agent"); // room agents and Grok Bot
     if (!first) return;
     if (first.id === GROK_BOT.id) {
       /* Grok Bot works in the background: no typing dots, it reports when done */
-      setTimeout(() => say(roomKey(room.id), { who: "agent", author: GROK_BOT.id, text: "(Prototype) On it in the background. I'll post here when it's done, and @ whoever needs to act." }), 1200);
+      setTimeout(() => say(key, { who: "agent", author: GROK_BOT.id, text: "(Prototype) On it in the background. I'll post here when it's done, and @ whoever needs to act." }), 1200);
       return;
     }
     const agent = roomAgents.find((a) => a.id === first.id)!;
     setReplying(agent.id);
     setTimeout(() => {
-      say(roomKey(room.id), { who: "agent", author: agent.id, text: `(Prototype) ${agent.name} would answer here for #${room.name}, following its guidelines.` });
+      say(key, { who: "agent", author: agent.id, text: `(Prototype) ${agent.name} would answer here for #${room.name}, following its guidelines.` });
       setReplying(null);
     }, 1500);
   };
@@ -92,7 +157,7 @@ export function RoomView({ room, files, setFiles }: { room: Room; files: Picked[
         </div>
       </header>
 
-      {seeded || extra.length || replying ? (
+      {seeded || extra.length || replying || replies.length ? (
         <div className="min-h-0 flex-1">
           <MessageScrollerProvider autoScroll>
             <MessageScroller>
@@ -274,28 +339,69 @@ export function RoomView({ room, files, setFiles }: { room: Room; files: Picked[
                   {extra.map((l, i) => {
                     const agent = agents.find((a) => a.id === l.author);
                     const mate = team.find((t) => t.id === l.author);
+                    const by = l.by ? agents.find((a) => a.name.toLowerCase() === l.by!.toLowerCase()) : undefined;
+                    /* an answer: its steps (when it had any), its words, or why it stopped */
+                    const answer = (
+                      <>
+                        {l.steps && <Steps title={l.steps.title} steps={l.steps.lines} />}
+                        {l.text && (
+                          <Words>
+                            <Said text={l.text} members={named} />
+                          </Words>
+                        )}
+                        {l.error && <Refusal title="It stopped">{l.error}</Refusal>}
+                      </>
+                    );
                     return (
                       <MessageScrollerItem key={i} messageId={`x${i}`} scrollAnchor={l.who === "you"}>
                         {l.who === "you" ? (
                           <YouSaid line={l}>
                             <Said text={l.text} members={members} />
                           </YouSaid>
+                        ) : l.author === GROK_BOT.id && by ? (
+                          <AgentSaid name={by.name} hue={by.hue} tag={<Tag size="sm" variant="secondary">Background</Tag>}>
+                            {answer}
+                          </AgentSaid>
                         ) : l.author === GROK_BOT.id ? (
-                          <GrokSaid>
-                            <Words>
-                              <Said text={l.text} members={named} />
-                            </Words>
-                          </GrokSaid>
+                          <GrokSaid>{answer}</GrokSaid>
                         ) : agent ? (
                           <AgentSaid name={agent.name} hue={agent.hue}>
-                            <Words>
-                              <Said text={l.text} members={members} />
-                            </Words>
+                            {answer}
                           </AgentSaid>
                         ) : (
                           <PersonSaid name={mate?.name ?? "Someone"} initials={mate?.initials ?? "?"} line={l}>
                             <Said text={l.text} members={members} />
                           </PersonSaid>
+                        )}
+                      </MessageScrollerItem>
+                    );
+                  })}
+                  {replies.map(({ rid, author, reply: r }) => {
+                    const agent = agents.find((a) => a.id === author);
+                    const by = r.by ? agents.find((a) => a.name.toLowerCase() === r.by!.toLowerCase()) : undefined;
+                    /* the same as an agent's turn in its own chat: the step it is on, then its words as they stream in */
+                    const body = (
+                      <>
+                        <Steps key={r.running ? "running" : "done"} running={r.running} open={r.running && r.steps.length > 0} title={r.title} steps={r.steps} />
+                        {r.text && (
+                          <Words>
+                            <Said text={r.text} members={named} />
+                          </Words>
+                        )}
+                      </>
+                    );
+                    return (
+                      <MessageScrollerItem key={rid} messageId={`reply-${rid}`}>
+                        {author === GROK_BOT.id && by ? (
+                          <AgentSaid name={by.name} hue={by.hue} thinking={r.running} tag={<Tag size="sm" variant="secondary">Background</Tag>}>
+                            {body}
+                          </AgentSaid>
+                        ) : author === GROK_BOT.id || !agent ? (
+                          <GrokSaid>{body}</GrokSaid>
+                        ) : (
+                          <AgentSaid name={agent.name} hue={agent.hue} thinking={r.running}>
+                            {body}
+                          </AgentSaid>
                         )}
                       </MessageScrollerItem>
                     );
@@ -338,7 +444,7 @@ export function RoomView({ room, files, setFiles }: { room: Room; files: Picked[
           files={files}
           setFiles={setFiles}
           onSend={send}
-          busy={replying !== null}
+          busy={replying !== null || replies.some((x) => x.author !== GROK_BOT.id)}
           mentions={members}
         />
       </div>

@@ -55,14 +55,14 @@ export async function runTurn(
   prompt: string,
   onEvent?: RunEventHandler,
   taskId?: string | null,
-  o: { turnNote?: string; via?: "voice" } = {},
+  o: { turnNote?: string; via?: "voice"; stream?: boolean } = {},
 ) {
   const key = `${agent.ref}:${thread}`;
   if (locks.has(key)) throw conflict("this conversation is already running a turn; wait for it to finish");
   locks.add(key);
   try {
     const { ctx, instructions } = await runContext(agent, ws, actor, { taskId });
-    return await runAgentTurn({ ctx, instructions, prompt, thread, quiet: true, onEvent, turnNote: o.turnNote, via: o.via });
+    return await runAgentTurn({ ctx, instructions, prompt, thread, quiet: true, onEvent, turnNote: o.turnNote, via: o.via, stream: o.stream });
   } finally {
     locks.delete(key);
   }

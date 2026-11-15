@@ -37,6 +37,7 @@ export function toAgent(a: AgentView, tasks: Task[]): Agent {
     job: jobOf(a.prompt),
     online: !!job,
     now: job ? (job.instructions.length > 40 ? `${job.instructions.slice(0, 37)}…` : job.instructions) : jobOf(a.prompt),
+    wallet: a.wallet,
   };
 }
 

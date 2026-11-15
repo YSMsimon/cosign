@@ -10,7 +10,19 @@ import type { Agent } from "./agents";
 import { team } from "./parts";
 
 /** One message. In a room, `author` says which teammate or agent said it (`who: "person"` is a teammate other than you). */
-export type Line = { who: "you" | "agent" | "person"; text: string; via?: "voice"; files?: string[]; author?: string };
+export type Line = {
+  who: "you" | "agent" | "person";
+  text: string;
+  via?: "voice";
+  files?: string[];
+  author?: string;
+  /** what the agent did before answering (a real answer in a room keeps its steps) */
+  steps?: { title: string; lines: string[] };
+  /** why it stopped, when it did */
+  error?: string;
+  /** a Grok Bot job that ran on the agent's own loop: shown as that agent's turn, tagged Background */
+  by?: string;
+};
 
 /** A person in the workspace. They sign in with their wallet; `invited` until they first do. */
 export type Teammate = { id: string; name: string; initials: string; wallet: string; address?: string; role: string; you?: boolean; invited?: boolean };

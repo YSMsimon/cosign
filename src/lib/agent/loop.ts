@@ -37,7 +37,11 @@ class XaiError extends Error {
   }
 }
 
-async function callXai(body: Record<string, unknown>, convId: string): Promise<XaiResponse> {
+/**
+ * One model call. With `onText`, the call is streamed: each piece of the answer's text goes to `onText` as Grok writes
+ * it, and the finished response (from `response.completed`) is returned, the same object as without streaming.
+ */
+async function callXai(body: Record<string, unknown>, convId: string, onText?: (text: string) => void): Promise<XaiResponse> {
   const res = await fetch(XAI, {
     method: "POST",
     headers: {
@@ -45,11 +49,40 @@ async function callXai(body: Record<string, unknown>, convId: string): Promise<X
       "Content-Type": "application/json",
       "x-grok-conv-id": convId,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(onText ? { ...body, stream: true } : body),
   });
-  const json = (await res.json().catch(() => ({}))) as XaiResponse & { error?: unknown };
-  if (!res.ok) throw new XaiError(res.status, `xAI ${res.status}: ${JSON.stringify(json.error ?? json).slice(0, 400)}`);
-  return json;
+  if (!onText || !res.ok || !res.body) {
+    const json = (await res.json().catch(() => ({}))) as XaiResponse & { error?: unknown };
+    if (!res.ok) throw new XaiError(res.status, `xAI ${res.status}: ${JSON.stringify(json.error ?? json).slice(0, 400)}`);
+    return json;
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let cut: number;
+    while ((cut = buf.indexOf("\n\n")) >= 0) {
+      const chunk = buf.slice(0, cut);
+      buf = buf.slice(cut + 2);
+      const data = /^data: (.+)$/m.exec(chunk)?.[1];
+      if (!data || data === "[DONE]") continue;
+      let ev: { type?: string; delta?: string; response?: XaiResponse & { error?: unknown }; error?: unknown };
+      try {
+        ev = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (ev.type === "response.output_text.delta" && ev.delta) onText(ev.delta);
+      else if (ev.type === "response.completed" && ev.response) return ev.response;
+      else if (ev.type === "response.failed" || ev.type === "response.incomplete" || ev.type === "error") {
+        throw new XaiError(502, `xAI stream ${ev.type}: ${JSON.stringify(ev.response?.error ?? ev.error ?? ev).slice(0, 400)}`);
+      }
+    }
+  }
+  throw new XaiError(502, "xAI stream ended before the response was complete");
 }
 
 // ───────────── compaction ─────────────
@@ -137,6 +170,7 @@ export async function runAgentTurn(opts: {
   thread?: string; // separate conversation (per person on a team agent, per schedule); memory stays shared
   turnNote?: string; // sent to the model with this prompt only (e.g. "this was spoken"), not stored in the transcript
   via?: "voice"; // how this turn reached us, kept on its transcript entries
+  stream?: boolean; // send the answer's text to onEvent as it is written ("text_delta"), not only at the end
 }) {
   const model = opts.model ?? "grok-4.3";
   const maxSteps = opts.maxSteps ?? 16;
@@ -148,6 +182,9 @@ export async function runAgentTurn(opts: {
     { quiet: opts.quiet, onEvent: opts.onEvent },
   );
   const tools = xaiTools(opts.ctx, { sayFirst: opts.via === "voice" }); // voice: each call carries a sentence to say first
+  // streamed text goes straight to the live view; the run log keeps only the whole reply (model_response, run_end)
+  const turnStart = Date.now();
+  const onText = opts.stream && opts.onEvent ? (text: string) => opts.onEvent!("text_delta", { text }, Date.now() - turnStart) : undefined;
   const totals = { in: 0, cached: 0, out: 0, webSearches: 0, xSearches: 0, toolCalls: 0, refusals: 0, compactions: 0 };
 
   // memory index: shown at the start of a chain, and again whenever it changed
@@ -188,7 +225,7 @@ export async function runAgentTurn(opts: {
       log.event("model_request", { step, chain: s.chainId, previous_response_id: previous ?? null, inputItems: input.length });
       let resp: XaiResponse;
       try {
-        resp = await callXai({ model, input, tools, store: true, prompt_cache_key: cacheKey, ...(previous ? { previous_response_id: previous } : {}) }, cacheKey);
+        resp = await callXai({ model, input, tools, store: true, prompt_cache_key: cacheKey, ...(previous ? { previous_response_id: previous } : {}) }, cacheKey, onText);
       } catch (e) {
         // stored responses expire (xAI keeps them 30 days): rebuild the chain from our transcript
         if (previous && e instanceof XaiError && (e.status === 404 || e.status === 400) && /response|previous/i.test(e.message)) {

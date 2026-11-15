@@ -27,7 +27,8 @@ The boards stay as they were (sample data in the browser) for design work.
 ## Screens
 
 - **Chat.** Agents you can use, with their saved orb colour and what they're working on. The conversation comes from
-  the saved thread: your turns, what the agent did (one line per tool call, shadcn Trace), its words, and cards:
+  the saved thread: your turns, what the agent did (one line per tool call, shadcn Trace), its words (streamed in as
+  Grok writes them), and cards:
   a red card for a refused payment, an Approval Row for a purchase over the ask-a-person line (Approve OKs it and
   tells the agent to go ahead), for a treasury payment it drafted (Approve cosigns from your wallet, Deny cancels it
   onchain), and for a funding request (Approve opens Circle's onramp for the treasury in a new tab). A message
@@ -45,7 +46,12 @@ The boards stay as they were (sample data in the browser) for design work.
   the sheet or card. When the treasury contract doesn't match an agent's settings, an approver signs the missing
   transactions from there. Treasury: balance and its 30-day history, approvers, where money went this week, onchain
   activity read from Arc, the ledger (open proposals approved or denied in your wallet) and every wallet.
-- **Rooms** are still the board's sample (out of scope for the demo; it shows a public room).
+- **Rooms** are still the board's sample (the rooms and their messages live in the browser, kept apart per workspace),
+  but who is in them is real: a room's agents are your agents and its people are the workspace's members (a room saved
+  with the board's sample names keeps whoever has that name here). Asking in one is real too: an agent named with @ is your real agent of that name, answering in your own conversation with it
+  (told which room it came from), and the room shows its steps and words as they stream in. "@Grok Bot …" in a room
+  starts a real background job for the agent it names (or the room's first agent) and follows it until it reports.
+  The answers are kept in the browser with the room.
 
 ## Browser tests
 
@@ -61,6 +67,7 @@ profile, one spec per part:
 | `05-treasury` | balance, approvers, activity, wallets; an open proposal approved from the ledger |
 | `06-voice` | a real ElevenLabs call; the spoken question becomes a Voice turn answered by the agent |
 | `07-grokbot-onramp` | a job on a (stand-in) Grok Bot routine is Grok Bot's turn; a team mention; a funding request opens Circle's sandbox onramp |
+| `08-room` | an agent named in a room answers for real with its words streamed; @Grok Bot in a room starts a real job |
 
 - The wallet is a throwaway key the test injects as an EIP-1193 provider (`tests/browser/wallet.ts`); there is no test
   login or backdoor in the app.

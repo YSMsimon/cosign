@@ -94,6 +94,31 @@ export function stepLine(name: string, args: Args, result: unknown): StepLine {
 /** A web or X search Grok ran itself. */
 export const searchLine = (tool: string, query: unknown) => `${tool.includes("x_search") ? "Searched X" : "Searched the web"}${query ? `: ${query}` : ""}`;
 
+/** A step of a turn that is still running: its line, plus the call it came from (the result arrives later). */
+export type LiveStep = StepLine & { name: string; args: Args; result?: unknown };
+type RunEvent = { type: string; ms: number; data: Record<string, unknown> };
+
+/**
+ * Fold one event of an agent's live run into what is shown so far: a line per tool call (completed when its result,
+ * refusal or error arrives), a line per search, and the answer's text as Grok writes it. Each new model call starts
+ * the text again, so words written before a tool call give way to the answer after it (as in the saved thread).
+ */
+export function foldRunEvent<T extends { steps: LiveStep[]; text?: string }>(cur: T, s: RunEvent): T {
+  const d = s.data as { tool?: string; args?: Args; result?: unknown; reason?: string; error?: string; query?: string; text?: string };
+  if (s.type === "text_delta") return { ...cur, text: (cur.text ?? "") + (d.text ?? "") };
+  if (s.type === "model_request") return cur.text ? { ...cur, text: "" } : cur;
+  const steps = [...cur.steps];
+  if (s.type === "tool_call") steps.push({ name: d.tool ?? "tool", args: d.args ?? {}, ...stepLine(d.tool ?? "tool", d.args ?? {}, undefined) });
+  else if (s.type === "server_tool") steps.push({ name: d.tool ?? "search", args: {}, label: searchLine(d.tool ?? "", d.query) });
+  else if (s.type === "tool_result" || s.type === "policy_refused" || s.type === "tool_error") {
+    const i = steps.findLastIndex((x) => x.name === d.tool && x.result === undefined);
+    if (i < 0) return cur;
+    const result = s.type === "tool_result" ? d.result : s.type === "policy_refused" ? { refused: true, reason: d.reason } : { error: d.error };
+    steps[i] = { ...steps[i], result, ...stepLine(steps[i].name, steps[i].args, result) };
+  } else return cur;
+  return { ...cur, steps };
+}
+
 /** The one-line title of a turn's steps: how long it took and how many things it did. */
 export function turnTitle(steps: number, ms: number | null) {
   const secs = ms !== null && ms > 0 ? Math.max(1, Math.round(ms / 1000)) : null;

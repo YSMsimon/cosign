@@ -17,7 +17,7 @@ import type { Room, Teammate } from "./store";
 /** `image` = a connected product's own icon (Grok Bot); `badge` replaces "Agent" in the @ list and the card. */
 export type Member = { id: string; name: string; kind: "agent" | "person"; sub: string; address: string; hue?: OrbHue; initials?: string; image?: string; badge?: string };
 
-export const agentMember = (a: Agent): Member => ({ id: a.id, name: a.name, kind: "agent", sub: a.job, address: walletOf(a.id).address, hue: a.hue });
+export const agentMember = (a: Agent): Member => ({ id: a.id, name: a.name, kind: "agent", sub: a.job, address: a.wallet ?? walletOf(a.id).address, hue: a.hue });
 export const personMember = (t: Teammate): Member => ({ id: t.id, name: t.name, kind: "person", sub: t.role, address: t.address ?? personAddress(t.id), initials: t.initials });
 
 /**

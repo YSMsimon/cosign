@@ -87,16 +87,25 @@ export function CosignProvider({ children }: { children: React.ReactNode }) {
     }
   }, [wsId]);
 
-  // the live feed: one stream per page; each event refreshes what it touched, then tells the screens
+  // the live feed: one stream per page; each event refreshes what it touched, then tells the screens. A burst of
+  // events (history read from Arc, a stream delivery) refreshes once, not once per event.
   useEffect(() => {
     if (!wsId || !canView) return;
     const es = new EventSource(`/api/v1/workspaces/${wsId}/activity/stream`);
+    const stale = new Set<string>();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const flush = () => {
+      timer = null;
+      invalidate(...stale);
+      stale.clear();
+    };
     const on = (event: Live) => (e: MessageEvent) => {
       let data: Record<string, unknown> = {};
       try {
         data = JSON.parse(e.data);
       } catch {}
-      invalidate(...STALE[event]);
+      for (const k of STALE[event]) stale.add(k);
+      timer ??= setTimeout(flush, 400);
       for (const h of handlers.get(event) ?? []) h(data);
     };
     const events: Live[] = ["activity", "proposal.drafted", "team.message"];
@@ -105,6 +114,7 @@ export function CosignProvider({ children }: { children: React.ReactNode }) {
     return () => {
       for (const [ev, fn] of fns) es.removeEventListener(ev, fn as EventListener);
       es.close();
+      if (timer) clearTimeout(timer);
     };
   }, [wsId, canView]);
 

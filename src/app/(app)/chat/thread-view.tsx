@@ -21,7 +21,7 @@ import type { Member } from "../../mockups/v2/mentions";
 import { Said } from "../../mockups/v2/mentions";
 import { AgentOrb, Refusal, Steps } from "../../mockups/v2/parts";
 import { Words, YouSaid } from "../../mockups/v2/thread";
-import { searchLine, stepLine, turnTitle, type StepLine } from "./steps";
+import { searchLine, stepLine, turnTitle, type LiveStep } from "./steps";
 
 export type ToolCall = { name: string; args: Record<string, unknown>; result: unknown; t: string };
 export type Turn =
@@ -29,7 +29,7 @@ export type Turn =
   | { kind: "agent"; key: string; tools: ToolCall[]; searches: string[]; text: string | null; via?: string; t: string; ms: number | null };
 
 /** The agent's turn while it is still working (from the live stream), until the saved thread has it. */
-export type LiveTurn = { prompt: string; steps: (StepLine & { name: string; args: Record<string, unknown>; result?: unknown })[]; text?: string; error?: string; running: boolean; startedAt: number; endedAt?: number };
+export type LiveTurn = { prompt: string; steps: LiveStep[]; text?: string; error?: string; running: boolean; startedAt: number; endedAt?: number };
 
 /** Something else in the conversation, placed by time: a background job or a team message. */
 export type Extra = { key: string; t: string; node: React.ReactNode };

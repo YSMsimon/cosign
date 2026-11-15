@@ -33,7 +33,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import { AgentOrb } from "./parts";
 
-export type Agent = { id: string; name: string; hue: OrbHue; job: string; online: boolean; now: string };
+export type Agent = { id: string; name: string; hue: OrbHue; job: string; online: boolean; now: string; /** its real wallet, in the app */ wallet?: string };
 
 export const HUES: OrbHue[] = ["violet", "pink", "orange", "blue", "teal"];
 const hueName = (h: OrbHue) => h.charAt(0).toUpperCase() + h.slice(1);

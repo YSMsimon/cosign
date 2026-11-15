@@ -128,6 +128,7 @@ export const api = {
   agentSpend: (ag: string, days = 30) => get<AgentSpend>(`/agents/${ag}/spend?days=${days}`),
   thread: (ag: string) => get<Thread>(`/agents/${ag}/thread`),
   startTask: (ag: string, instructions: string) => post<{ task: Task }>(`/agents/${ag}/tasks`, { instructions }),
+  task: (tid: string) => get<{ task: Task }>(`/tasks/${tid}`),
   grokbot: (ag: string) => get<{ connection: { status: string; connectedAt?: string | null; lastError?: string | null }; setupMessage: string }>(`/agents/${ag}/grokbot`),
   voiceStatus: (ag: string) => get<{ configured: boolean; elevenAgentId: string | null }>(`/agents/${ag}/voice`),
   startVoice: (ag: string) => post<VoiceSession>(`/agents/${ag}/voice`),
@@ -144,11 +145,13 @@ export async function chatTurn(
   message: string,
   onStep: (s: { type: string; ms: number; data: Record<string, unknown> }) => void,
   signal?: AbortSignal,
+  /** context for the agent with this message only (e.g. which room it was sent in); not saved in the thread */
+  note?: string,
 ): Promise<{ finalText: string }> {
   const r = await fetch(`/api/v1/agents/${ag}/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(note ? { message, note } : { message }),
     credentials: "same-origin",
     signal,
   });

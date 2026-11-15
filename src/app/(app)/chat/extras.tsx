@@ -19,7 +19,7 @@ import { useCosign } from "../cosign";
 import { ToolCard } from "./cards";
 import type { Extra, ToolCall } from "./thread-view";
 
-const STATUS: Record<string, string> = {
+export const STATUS: Record<string, string> = {
   queued: "Waiting to start",
   sent: "Sent to Grok Bot",
   acked: "Grok Bot picked it up",

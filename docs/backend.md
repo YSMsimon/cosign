@@ -105,9 +105,10 @@ the API returns `{ chainId, to, data, value, description }`; the frontend sends 
 
 ## Chat
 
-`POST /agents/:id/chat {message}` streams Server-Sent Events: `step` for every loop event (Grok
-thinking, web/X searches, tool calls with arguments, results, refusals), then `done` with the answer,
-token use and cost. Each person has their own thread (`GET /agents/:id/thread`); memory is shared. The thread
+`POST /agents/:id/chat {message, note?}` streams Server-Sent Events: `step` for every loop event (Grok
+thinking, web/X searches, tool calls with arguments, results, refusals, and `text_delta` for each piece of the
+answer as Grok writes it), then `done` with the answer, token use and cost. `note` is context for the model
+with this message only (the app sends the room a message came from); it isn't saved in the thread. Each person has their own thread (`GET /agents/:id/thread`); memory is shared. The thread
 returns each tool call with its arguments and its (parsed, 1,500-character) result, so the app can redraw a turn's
 cards after a reload. The frontend that reads all this is described in [frontend.md](frontend.md).
 
@@ -123,13 +124,16 @@ cards after a reload. The frontend that reads all this is described in [frontend
 
 Events come from an in-process bus, so this needs one long-running server (not serverless functions).
 
-`GET /workspaces/:ws/activity` first reads anything new from Arc for that treasury (its own events, and USDC moving
-in or out of it through Arc's system emitter), decodes it with the stream's decoder and stores it (deduped on tx
-hash + log index, so it agrees with the QuickNode stream's rows), at most every 10 seconds per treasury. The first
-read starts near the block the workspace was made in. So the activity is complete even while the stream is paused.
+`GET /workspaces/:ws/activity` answers from what's stored, and starts a background read of anything new on Arc for
+that treasury (its own events, and USDC moving in or out of it through Arc's system emitter), decoded with the
+stream's decoder and stored (deduped on tx hash + log index, so it agrees with the QuickNode stream's rows). New rows
+reach open pages through the live stream. Arc's public RPC allows at most 10,000 blocks per log query and about one
+request a second, so the read is paced (one call every 1.1 s), newest blocks first, then back to the newest stored
+row or about 3 days (the treasury's start, if later). It keeps its place after each chunk, and after a refusal it
+waits 30 s and carries on. At most one read runs per treasury, at most every 15 s.
 
-Arc's public RPC rate-limits bursts (429): the server's client retries with backoff, and executed or cancelled
-proposals are read once and kept (they never change).
+Other reads from Arc's public RPC retry with backoff when it rate-limits (429), and executed or cancelled
+proposals are read once and kept (they never change). The app refreshes once per burst of live events.
 
 ## Wallet: what an agent's own wallet can do (Circle App Kit)
 

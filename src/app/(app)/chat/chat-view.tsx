@@ -31,11 +31,13 @@ import { useAgents as useSampleAgents, useRooms, useTeam as useSampleTeam } from
 import { aboutInfo, hueOf, useAgentsData } from "../agents-data";
 import { AppShell, initialsOf } from "../app-shell";
 import { useCosign, useLive } from "../cosign";
-import { stepLine, searchLine } from "./steps";
+import { foldRunEvent } from "./steps";
 import { buildTurns, ThreadView, type LiveTurn } from "./thread-view";
 import { useChatExtras, useToolCards } from "./extras";
 import { ChatActionsContext } from "./actions";
 import { ToolCard } from "./cards";
+import { useRoomAsk } from "./room-ask";
+import { useRealRooms } from "./rooms-data";
 import { useVoiceCall, type Phase } from "./voice";
 
 const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
@@ -50,10 +52,9 @@ export function ChatView() {
   const params = useSearchParams();
   const { wsId, ws, can, address } = useCosign();
   const agentsData = useAgentsData();
-  const { rooms, add: addRoom, addMembers } = useRooms();
+  const { rooms: savedRooms, add: addRoom, addMembers } = useRooms();
   const { team: sampleTeam } = useSampleTeam();
   const { agents: sampleAgents } = useSampleAgents();
-  const room = rooms.find((r) => r.id === params.get("room"));
   const agents = agentsData.usable;
   const agent = agents.find((a) => a.id === params.get("agent")) ?? agents[0];
   const view = agentsData.views.find((a) => a.id === agent?.id);
@@ -65,11 +66,17 @@ export function ChatView() {
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   const [live, setLive] = useState<LiveTurn | null>(null);
+  const roomAsk = useRoomAsk(); // in a room, the agents named are your real agents
   const [notice, setNotice] = useState<{ title: string; text: string } | null>(null);
 
   const thread = useData(agent ? `thread:${agent.id}` : null, () => api.thread(agent!.id));
   const detail = useData(agent ? `agent:${agent.id}` : null, () => api.agent(agent!.id));
   const teamData = useData(`team:${wsId}`, () => api.team(wsId));
+  // rooms are kept in the browser, but who is in them is real: your agents and the workspace's people
+  const sample = useMemo(() => ({ agents: sampleAgents, team: sampleTeam }), [sampleAgents, sampleTeam]);
+  const real = useRealRooms({ rooms: savedRooms, agents, people: teamData.data?.people, address, sample });
+  const rooms = real.rooms;
+  const room = rooms.find((r) => r.id === params.get("room"));
   const roles = useData(can("members.manage") ? `roles:${wsId}` : null, () => api.roles(wsId));
 
   // who @ can name in a message: the other agents, Grok Bot (runs this agent's job in the background), then people
@@ -131,23 +138,8 @@ export function ChatView() {
       const startedAt = Date.now();
       setLive({ prompt: text + note, steps: [], running: true, startedAt });
       try {
-        const done = await chatTurn(agent.id, text, (s) => {
-          setLive((cur) => {
-            if (!cur) return cur;
-            const steps = [...cur.steps];
-            const d = s.data as { tool?: string; args?: Record<string, unknown>; result?: unknown; reason?: string; error?: string; query?: string };
-            if (s.type === "tool_call") steps.push({ name: d.tool ?? "tool", args: d.args ?? {}, ...stepLine(d.tool ?? "tool", d.args ?? {}, undefined) });
-            else if (s.type === "server_tool") steps.push({ name: d.tool ?? "search", args: {}, label: searchLine(d.tool ?? "", d.query) });
-            else if (s.type === "tool_result" || s.type === "policy_refused" || s.type === "tool_error") {
-              const i = steps.findLastIndex((x) => x.name === d.tool && x.result === undefined);
-              if (i >= 0) {
-                const result = s.type === "tool_result" ? d.result : s.type === "policy_refused" ? { refused: true, reason: d.reason } : { error: d.error };
-                steps[i] = { ...steps[i], result, ...stepLine(steps[i].name, steps[i].args, result) };
-              }
-            }
-            return { ...cur, steps };
-          });
-        });
+        // steps and the answer's words appear as the agent works (the words stream in as Grok writes them)
+        const done = await chatTurn(agent.id, text, (s) => setLive((cur) => (cur ? foldRunEvent(cur, s) : cur)));
         setLive((cur) => (cur ? { ...cur, running: false, endedAt: Date.now(), text: done.finalText } : cur));
         // the saved thread now has the whole turn (with its cards); swap the live copy for it
         const fresh = await api.thread(agent.id);
@@ -282,8 +274,8 @@ export function ChatView() {
           <NewRoomDialog
             open={dialog === "room"}
             onOpenChange={(o) => setDialog(o ? "room" : null)}
-            team={sampleTeam}
-            agents={sampleAgents}
+            team={real.team}
+            agents={real.agents}
             onCreate={(r) => {
               addRoom(r);
               selectRoom(r.id);
@@ -334,7 +326,7 @@ export function ChatView() {
 
         {room ? (
           <main className="flex min-w-0 flex-1 flex-col">
-            <RoomView key={room.id} room={room} files={files} setFiles={setFiles} />
+            <RoomView key={room.id} room={room} files={files} setFiles={setFiles} ask={roomAsk} people={real} scope={wsId} />
           </main>
         ) : agent ? (
           <main className="flex min-w-0 flex-1">
