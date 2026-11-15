@@ -2,7 +2,7 @@
  * The browser's client for Cosign's API (`/api/v1`, same origin, the httpOnly session cookie goes along).
  * Response types come straight from the server functions (type-only imports, erased at build), so the two can't drift.
  */
-import type { ActivityRow, FundingRequestRow, TeamMessageRow } from "@/lib/db/schema";
+import type { ActivityRow, ContactRow, FundingRequestRow, TeamMessageRow } from "@/lib/db/schema";
 import type { agentDetail, agentView, listAgents } from "@/lib/server/agents";
 import type { readThread } from "@/lib/server/chat";
 import type { taskView } from "@/lib/server/grokbot";
@@ -30,6 +30,7 @@ export type Thread = ReturnType<typeof readThread>;
 export type ThreadMessage = Thread["messages"][number];
 export type Task = ReturnType<typeof taskView>;
 export type FundingRequest = FundingRequestRow;
+export type Contact = ContactRow;
 export type Activity = Omit<ActivityRow, "raw"> & { explorer?: string };
 export type VoiceSession = Awaited<ReturnType<typeof startVoice>>;
 export type AgentSpend = ReturnType<typeof agentSpend>;
@@ -88,6 +89,10 @@ export const api = {
   invite: (ws: string, b: { address: string; roleId: string; title?: string }) => post<{ member: unknown }>(`/workspaces/${ws}/members`, b),
   updateMember: (ws: string, mid: string, b: { roleId?: string; title?: string | null }) => patch<unknown>(`/workspaces/${ws}/members/${mid}`, b),
   roles: (ws: string) => get<{ roles: Role[] }>(`/workspaces/${ws}/roles`),
+  contacts: (ws: string) => get<{ contacts: Contact[] }>(`/workspaces/${ws}/contacts`),
+  addContact: (ws: string, b: { name: string; address: string; notes?: string }) => post<{ contact: Contact }>(`/workspaces/${ws}/contacts`, b),
+  approverChangeTx: (ws: string, b: { kind: "add" | "remove" | "threshold"; address?: string; newThreshold?: number }) => post<{ tx: PreparedTx }>(`/workspaces/${ws}/approver-changes`, b),
+  agentOnchain: (ag: string) => get<AgentDetail["onchain"]>(`/agents/${ag}/onchain`),
   team: (ws: string) => get<Team>(`/workspaces/${ws}/team`),
   teamMessages: (ws: string, limit = 100) => get<{ messages: TeamMessage[] }>(`/workspaces/${ws}/team/messages?limit=${limit}`),
   tasks: (ws: string) => get<{ tasks: Task[] }>(`/workspaces/${ws}/tasks`),
@@ -101,6 +106,7 @@ export const api = {
   approvals: (ws: string, status: "pending" | "all" = "pending") => get<{ approvals: Approval[] }>(`/workspaces/${ws}/approvals?status=${status}`),
   decide: (ws: string, rid: string, decision: "approve" | "deny") => post<{ approval: unknown }>(`/workspaces/${ws}/approvals/${rid}`, { decision }),
   fundingRequests: (ws: string) => get<{ requests: FundingRequest[] }>(`/workspaces/${ws}/funding-requests`),
+  declineFunding: (ws: string, rid: string) => post<{ request: FundingRequest }>(`/workspaces/${ws}/funding-requests/${rid}/decline`),
   onramp: (ws: string, b: { requestId?: string; amountUsd?: number }) =>
     post<{ widgetUrl: string; expiresAt: string; sandbox: boolean; destination: string; requestId: string | null }>(`/workspaces/${ws}/onramp`, b),
 

@@ -31,6 +31,7 @@ import { useCosign } from "../cosign";
 import { stepLine, searchLine } from "./steps";
 import { buildTurns, ThreadView, type LiveTurn } from "./thread-view";
 import { useChatExtras, useToolCards } from "./extras";
+import { ChatActionsContext } from "./actions";
 
 const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
 
@@ -350,7 +351,9 @@ export function ChatView() {
                   </Alert>
                 </div>
               ) : turns.length || live || extras.length ? (
-                <ThreadView agent={agent} turns={turns} live={live} extras={extras} members={members} cards={cards} />
+                <ChatActionsContext.Provider value={{ say: (t) => void send(t, []) }}>
+                  <ThreadView agent={agent} turns={turns} live={live} extras={extras} members={members} cards={cards} />
+                </ChatActionsContext.Provider>
               ) : (
                 <EmptyState className="flex-1">
                   <AgentOrb hue={agent.hue} className="size-14" />

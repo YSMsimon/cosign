@@ -84,3 +84,12 @@ export async function openOnramp(m: Membership, o: { requestId?: string; amountU
 
 export const listFundingRequests = (workspaceId: string) =>
   db().select().from(schema.fundingRequests).where(eq(schema.fundingRequests.workspaceId, workspaceId)).orderBy(desc(schema.fundingRequests.createdAt)).limit(50).all();
+
+/** An approver says no to a funding request (nothing is bought; the agent sees it declined). */
+export function declineFunding(m: Membership, requestId: string) {
+  if (!mayAddFunds(m.permissions)) throw forbidden("only an approver or a workspace manager can decide on adding funds");
+  const req = db().select().from(schema.fundingRequests).where(and(eq(schema.fundingRequests.id, requestId), eq(schema.fundingRequests.workspaceId, m.workspace.id))).get();
+  if (!req) throw notFound("no such funding request in this workspace");
+  db().update(schema.fundingRequests).set({ status: "declined", updatedAt: new Date().toISOString() }).where(eq(schema.fundingRequests.id, req.id)).run();
+  return { ...req, status: "declined" };
+}

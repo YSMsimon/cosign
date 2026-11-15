@@ -157,6 +157,10 @@ type Outcome = { title: string; note?: string; href?: string };
  * that needs a person: a paid API call above the ask-a-person line, a command, a treasury payment. The disc carries
  * the state: amber while it waits, green once paid, plain once denied. After Approve, `pending` steps (connecting the
  * wallet, waiting for the signature, sending to the treasury) show one by one beside a Pesto Spinner.
+ *
+ * On the design boards the steps are timed. In the app, `act` does the real thing (the API, the person's wallet) and
+ * reports which step it is on; if it fails, its error shows and the row stays open to try again. `waiting` shows a row
+ * with no buttons (someone else approves), and `decision` shows one that was already decided.
  */
 export function ApprovalRow({
   title,
@@ -167,6 +171,9 @@ export function ApprovalRow({
   decision,
   onDecide,
   pending = [],
+  act,
+  denySteps = [],
+  waiting,
 }: {
   title: string;
   description: string;
@@ -176,21 +183,42 @@ export function ApprovalRow({
   denied: Outcome;
   decision?: Decision; // controlled from outside; otherwise the row keeps its own
   onDecide?: (approved: boolean) => void;
-  /** what happens after Approve, in order (prototype: about a second each) */
+  /** what happens after Approve, in order (design boards: about a second each) */
   pending?: string[];
+  /** the real action: resolves with anything to add to the outcome (e.g. the transaction's link), or throws */
+  act?: (yes: boolean, step: (i: number) => void) => Promise<Partial<Outcome> | void>;
+  /** what happens after Deny, in order, when denying takes steps too (cancelling onchain) */
+  denySteps?: string[];
+  /** no buttons: why it is waiting */
+  waiting?: string;
 }) {
   const [own, setOwn] = useState<Decision>("open");
-  const [step, setStep] = useState<number | null>(null);
+  const [run, setRun] = useState<{ yes: boolean; step: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [extra, setExtra] = useState<Partial<Outcome> | null>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
-  const d = decision ?? own;
+  const d = own !== "open" ? own : (decision ?? "open");
   const decide = (yes: boolean) => {
+    if (act) {
+      setError(null);
+      setRun({ yes, step: 0 });
+      act(yes, (i) => setRun({ yes, step: i }))
+        .then((o) => {
+          setExtra(o ?? null);
+          setOwn(yes ? "approved" : "denied");
+          onDecide?.(yes);
+        })
+        .catch((e: Error) => setError(e.message))
+        .finally(() => setRun(null));
+      return;
+    }
     if (yes && pending.length) {
-      setStep(0);
-      pending.forEach((_, i) => i > 0 && timers.current.push(setTimeout(() => setStep(i), i * 1300)));
+      setRun({ yes, step: 0 });
+      pending.forEach((_, i) => i > 0 && timers.current.push(setTimeout(() => setRun({ yes, step: i }), i * 1300)));
       timers.current.push(
         setTimeout(() => {
-          setStep(null);
+          setRun(null);
           setOwn("approved");
           onDecide?.(true);
         }, pending.length * 1300),
@@ -202,7 +230,7 @@ export function ApprovalRow({
   };
 
   if (d !== "open") {
-    const o = d === "approved" ? approved : denied;
+    const o = { ...(d === "approved" ? approved : denied), ...(extra ?? {}) };
     return (
       <Alert
         variant={d === "approved" ? "success" : "default"}
@@ -221,15 +249,16 @@ export function ApprovalRow({
       </Alert>
     );
   }
-  const running = step !== null;
+  const steps = run ? (run.yes ? pending : denySteps) : [];
+  const label = run ? (steps[run.step] ?? (run.yes ? "Working…" : "Denying…")) : null;
   return (
     <Alert
       variant="warning"
       severityLabel="Needs your approval"
       action={
-        running ? (
-          <Spinner size="sm" label={pending[step]} className="mx-3 text-muted-foreground" />
-        ) : (
+        label ? (
+          <Spinner size="sm" label={label} className="mx-3 text-muted-foreground" />
+        ) : waiting ? undefined : (
           <span className="flex gap-2">
             <Button size="sm" variant="outline" onClick={() => decide(false)}>
               Deny
@@ -243,12 +272,14 @@ export function ApprovalRow({
     >
       <AlertTitle>{title}</AlertTitle>
       <AlertDescription aria-live="polite">
-        {running ? (
-          pending[step]
+        {label ? (
+          label
         ) : (
           <>
             <span className="block">{description}</span>
             {address && <AddressLine address={address.value} label={address.label} />}
+            {waiting && <span className="block">{waiting}</span>}
+            {error && <span className="block text-destructive">Didn&apos;t go through: {error}</span>}
           </>
         )}
       </AlertDescription>

@@ -8,6 +8,13 @@ import { generatePrivateKey } from "viem/accounts";
 import { api, fund, send, signIn, type PreparedTx } from "../e2e/helpers";
 import { personFromKey, readState, writeState, type State } from "./shared";
 
+/** The agent's own wallet pays its sends and its network fees (USDC is Arc's gas): keep a little in it. */
+async function topUp(wallet: string, usdc: number) {
+  if (usdc >= 0.08) return;
+  await fund(wallet, "0.1");
+  console.log(`[browser] topped up the agent's wallet (${usdc} → +0.1 USDC)`);
+}
+
 export default async function globalSetup() {
   if (!process.env.FRESH) {
     try {
@@ -18,6 +25,7 @@ export default async function globalSetup() {
       const a = await api(owner, "GET", `/agents/${s.agent}`);
       if (r.status === 200 && a.status === 200 && a.json.agent.status === "active") {
         console.log(`[browser] reusing workspace ${s.ws} (made ${s.createdAt}); FRESH=1 makes a new one`);
+        await topUp(a.json.agent.wallet, Number(a.json.agent.balances.walletUsdc));
         return;
       }
     } catch {
@@ -54,8 +62,9 @@ export default async function globalSetup() {
   // what the Clerk's settings need onchain (may draft; network fees), signed by the owner's wallet
   const onchain = await api(owner, "GET", `/agents/${agentId}/onchain`);
   for (const tx of (onchain.json.toSign ?? []) as PreparedTx[]) await send(owner, tx);
-  // a little money in the treasury, so an approved payment can go out
+  // a little money in the treasury, so an approved payment can go out; and in the agent's wallet, for its fees
   await fund(treasury, "0.2");
+  await topUp(agent.json.agent.wallet, 0);
 
   const s: State = { ownerKey, ws, treasury, agent: agentId, agentName: "Clerk", lena, createdAt: new Date().toISOString() };
   writeState(s);

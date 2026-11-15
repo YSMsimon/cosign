@@ -18,7 +18,7 @@ import { botContext, botTool, callback, connect, connectionOf, connectionView, d
 import { badRequest, errorResponse, forbidden, HttpError, notFound, parseBody } from "./http";
 import { activityMatcher, approverChangeTx, cancelTx, cosignTx, decideApproval, listApprovals, listProposals, workspaceActivity } from "./money";
 import { createSchedule, deleteSchedule, listSchedules, tick, updateSchedule } from "./schedules";
-import { listFundingRequests, openOnramp } from "./funding";
+import { declineFunding, listFundingRequests, openOnramp } from "./funding";
 import { agentSpend, workspaceSpend } from "./spend";
 import { handleMcp, issueMcpToken, mcpStatus, revokeMcpTokens } from "./mcp";
 import { listTeam } from "./team";
@@ -262,6 +262,7 @@ route("GET", "/tasks/:tid", (req, p) => {
 
 // money in: an approver opens Circle's onramp for the treasury (from an agent's funding request, or on their own)
 route("GET", "/workspaces/:ws/funding-requests", (req, p) => ({ requests: listFundingRequests(requireMember(req, p.ws).workspace.id) }));
+route("POST", "/workspaces/:ws/funding-requests/:rid/decline", (req, p) => ({ request: declineFunding(requireMember(req, p.ws), p.rid) }));
 route("POST", "/workspaces/:ws/onramp", async (req, p) => {
   const m = requireMember(req, p.ws);
   const b = await parseBody(req, z.object({ requestId: z.string().optional(), amountUsd: z.number().positive().max(10_000).optional() }));

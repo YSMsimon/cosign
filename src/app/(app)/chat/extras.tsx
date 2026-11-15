@@ -27,8 +27,11 @@ const STATUS: Record<string, string> = {
   failed: "Couldn't finish",
 };
 
-/** One background job: what was asked, what it did (its recorded steps), and its result. */
+/** One background job: what was asked, what it did (its recorded steps), its result, and any payment it drafted. */
 function JobView({ task, agent }: { task: Task; agent: Agent }) {
+  const { wsId } = useCosign();
+  const proposals = useData(`proposals:${wsId}`, () => api.proposals(wsId));
+  const drafted = (proposals.data?.proposals ?? []).filter((p) => p.taskId === task.id);
   const running = !["done", "failed"].includes(task.status);
   const tools = task.progress.filter((p) => p.kind === "tool").map((p) => p.message);
   const notes = task.progress.filter((p) => p.kind !== "tool").map((p) => p.message);
@@ -40,6 +43,9 @@ function JobView({ task, agent }: { task: Task; agent: Agent }) {
           <Said text={task.result ?? `Couldn't finish: ${task.error}`} members={[]} />
         </Words>
       )}
+      {drafted.map((p) => (
+        <ToolCard key={p.id} agent={agent} call={{ name: "propose_payment", args: {}, result: { proposalId: String(p.id) }, t: p.createdAt }} />
+      ))}
     </>
   );
   // a job on Grok Bot is Grok Bot's turn (its own icon, "Background"); on our own loop it is the agent's, tagged
