@@ -3,17 +3,12 @@
 import { Plus } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { SectionHeader } from "@/components/section-header";
-import { UserRow } from "@/components/user-row";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { TableCard, TableCardBody } from "@/components/ui/table-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Tag } from "@/components/ui/tag";
-import { AddressLine, personAddress } from "../money";
+import { personAddress } from "../money";
 import { Shell } from "../parts";
 import { AgentsTab } from "./agents-tab";
+import { PeopleTable } from "./people";
 import { TreasuryTab } from "./treasury";
 
 const people = [
@@ -47,52 +42,19 @@ export default function PermissionsPage() {
 
           <TabsContent value="people" className="mt-4">
             <SectionHeader title="People" description="Approving happens in each person's own wallet." />
-            <TableCard className="mt-3">
-              <TableCardBody>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Person</TableHead>
-                      <TableHead>Role</TableHead>
-                      <TableHead>Can approve</TableHead>
-                      <TableHead>Can ask agents to pay</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {people.map((p) => (
-                      <TableRow key={p.name}>
-                        <TableCell>
-                          <UserRow
-                            size="sm"
-                            label={p.name}
-                            sublabel={
-                              <span className="inline-flex items-center gap-1">
-                                <AddressLine address={personAddress(p.name.toLowerCase())} label={`${p.name}'s wallet address`} />
-                                {p.sub.endsWith("you") && <span className="text-xs text-muted-foreground">· you</span>}
-                              </span>
-                            }
-                            avatar={
-                              <Avatar className="size-8">
-                                <AvatarFallback>{p.initials}</AvatarFallback>
-                              </Avatar>
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Tag variant={p.role === "Owner" ? "default" : p.role === "Approver" ? "info" : "secondary"}>{p.role}</Tag>
-                        </TableCell>
-                        <TableCell>
-                          <Switch defaultChecked={p.approve} aria-label={`${p.name} can approve`} />
-                        </TableCell>
-                        <TableCell>
-                          <Switch defaultChecked={p.request} aria-label={`${p.name} can ask agents to pay`} />
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableCardBody>
-            </TableCard>
+            <PeopleTable
+              people={people.map((p) => ({
+                id: p.name,
+                name: p.name,
+                initials: p.initials,
+                address: personAddress(p.name.toLowerCase()),
+                role: p.role,
+                tone: p.role === "Owner" ? "default" : p.role === "Approver" ? "info" : "secondary",
+                approve: p.approve,
+                request: p.request,
+                you: p.sub.endsWith("you"),
+              }))}
+            />
           </TabsContent>
 
           <TabsContent value="agents" className="mt-4">

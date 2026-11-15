@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Field } from "@/components/field";
 import { SectionFooter } from "@/components/section-footer";
 import { Button } from "@/components/ui/button";
@@ -101,8 +102,12 @@ function LimitInput({ d, k }: { d: Draft; k: LimitKey }) {
   );
 }
 
+/** Saves on the server (the app); resolves once saved, throws with the server's reason if it refused. */
+export type SaveLimits = (next: Limits, changes: { key: LimitKey; before: number; after: number }[]) => Promise<void>;
+
 /** Pesto Section Footer: the pending changes, one per line as before → after, then Cancel and Save. */
-function ChangesFooter({ d, keys, onDone }: { d: Draft; keys: LimitKey[]; onDone: () => void }) {
+function ChangesFooter({ d, keys, onDone, onSave, onError }: { d: Draft; keys: LimitKey[]; onDone: () => void; onSave?: SaveLimits; onError: (e: string | null) => void }) {
+  const [saving, setSaving] = useState(false);
   const changes = d.changes.filter((x) => keys.includes(x.key));
   const n = changes.length;
   const onchain = changes.some((x) => ONCHAIN.includes(x.key));
@@ -137,13 +142,25 @@ function ChangesFooter({ d, keys, onDone }: { d: Draft; keys: LimitKey[]; onDone
       </Button>
       <Button
         size="sm"
-        disabled={n === 0}
-        onClick={() => {
+        disabled={n === 0 || saving}
+        onClick={async () => {
+          if (onSave) {
+            onError(null);
+            setSaving(true);
+            try {
+              await onSave(d.draft, changes);
+            } catch (e) {
+              onError((e as Error).message);
+              return;
+            } finally {
+              setSaving(false);
+            }
+          }
           d.save();
           onDone();
         }}
       >
-        {n > 1 ? `Save ${n} changes` : n === 1 ? "Save change" : "Save"}
+        {saving ? "Saving…" : n > 1 ? `Save ${n} changes` : n === 1 ? "Save change" : "Save"}
       </Button>
     </SectionFooter>
   );
@@ -153,12 +170,16 @@ function ChangesFooter({ d, keys, onDone }: { d: Draft; keys: LimitKey[]; onDone
  * One section's limits in a side Sheet (Pesto Sheet + Field + Input Group). A change is a draft, shown as
  * before → after, until Save; closing without Save drops it.
  */
-export function LimitsSheet({ d, keys, title, open, onOpenChange }: { d: Draft; keys: LimitKey[]; title: string; open: boolean; onOpenChange: (o: boolean) => void }) {
+export function LimitsSheet({ d, keys, title, open, onOpenChange, onSave }: { d: Draft; keys: LimitKey[]; title: string; open: boolean; onOpenChange: (o: boolean) => void; onSave?: SaveLimits }) {
+  const [error, setError] = useState<string | null>(null);
   return (
     <Sheet
       open={open}
       onOpenChange={(o) => {
-        if (!o) d.cancel();
+        if (!o) {
+          d.cancel();
+          setError(null);
+        }
         onOpenChange(o);
       }}
     >
@@ -174,8 +195,14 @@ export function LimitsSheet({ d, keys, title, open, onOpenChange }: { d: Draft; 
             </Field>
           ))}
         </div>
-        <div className="px-4 pb-4">
-          <ChangesFooter d={d} keys={keys} onDone={() => onOpenChange(false)} />
+        <div className="flex flex-col gap-3 px-4 pb-4">
+          {error && (
+            <Alert variant="destructive" severityLabel="Not saved">
+              <AlertTitle>The server said no</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          <ChangesFooter d={d} keys={keys} onDone={() => onOpenChange(false)} onSave={onSave} onError={setError} />
         </div>
       </SheetContent>
     </Sheet>
