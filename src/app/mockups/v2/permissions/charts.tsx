@@ -29,7 +29,7 @@ const DAYS = Array.from({ length: 30 }, (_, i) => {
 const day = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
 const spendConfig = {
-  purchases: { label: "API purchases", color: "var(--chart-1)" },
+  purchases: { label: "From its wallet", color: "var(--chart-1)" },
   drafts: { label: "Treasury drafts", color: "var(--chart-2)" },
 } satisfies ChartConfig;
 type Series = keyof typeof spendConfig;
@@ -149,7 +149,7 @@ const SAMPLE_RANK: RankRow[] = [
       name: "Clerk",
       hue: "blue" as const,
       total: sum("drafts") + sum("purchases"),
-      sub: `Drafts ${usd(sum("drafts"))} · APIs ${usd(sum("purchases"))}`,
+      sub: `Drafts ${usd(sum("drafts"))} · From its wallet ${usd(sum("purchases"))}`,
     },
     { name: "Auditor", hue: "violet" as const, total: 0, sub: "No money abilities" },
     { name: "Scribe", hue: "teal" as const, total: 0, sub: "No money abilities" },

@@ -82,7 +82,7 @@ export async function cosignTx(m: Membership, pid: number) {
   if (pid < 0 || BigInt(pid) >= count) throw notFound("proposal not found");
   const p = await readProposal(t, BigInt(pid));
   if (p.executed || p.cancelled) throw conflict(`proposal #${pid} is ${p.executed ? "already executed" : "cancelled"}`);
-  if (await chain.readContract({ address: t, abi: companyTreasuryAbi, functionName: "approvedBy", args: [BigInt(pid), m.address as Address] })) throw conflict("you already cosigned it");
+  if (await chain.readContract({ address: t, abi: companyTreasuryAbi, functionName: "approvedBy", args: [BigInt(pid), m.address as Address] })) throw conflict("you already approved it");
   const what = p.kind === 0 ? `pay $${formatUnits(p.amount, 6)} to ${p.to}` : `${KINDS[p.kind]} ${p.kind === 3 ? p.newThreshold : p.to}`;
   return prepare(t, companyTreasuryAbi, "approve", [BigInt(pid)], `Cosign #${pid}: ${what}`);
 }

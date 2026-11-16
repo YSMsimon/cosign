@@ -110,7 +110,7 @@ export function TreasuryPanel() {
         case "proposal_created":
           return { ...base, tone: "info", icon: <Bot />, title: `${nameOf(r.actor)} drafted proposal #${r.proposalId}`, description: `${amt} to ${nameOf(r.counterparty)}` };
         case "proposal_approved":
-          return { ...base, tone: "info", icon: <CircleCheck />, title: `${nameOf(r.actor)} approved #${r.proposalId}`, description: "Cosigned in their own wallet" };
+          return { ...base, tone: "info", icon: <CircleCheck />, title: `${nameOf(r.actor)} approved #${r.proposalId}`, description: "Signed in their own wallet" };
         case "payment_executed":
           return { ...base, tone: "success", icon: <CircleCheck />, title: `Proposal #${r.proposalId} paid`, description: `${amt} to ${nameOf(r.counterparty)}` };
         case "proposal_cancelled":

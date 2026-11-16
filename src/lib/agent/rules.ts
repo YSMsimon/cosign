@@ -272,7 +272,7 @@ export function rulesMarkdown(name: string, r: AgentRules, payees: { name: strin
   lines.push(`- Abilities: ${(["buy", "draft", "pettyCash", "sandbox"] as const).filter((k) => r.abilities[k]).join(", ") || "read-only"}.`);
   if (!moneyLive(c)) lines.push(`- Money abilities are OFF right now (${c.frozen ? "frozen" : "past the end date"}).`);
   if (r.abilities.buy) {
-    lines.push(`- API purchases: per payment ${usd(c.purchases.perPayment)}, per day ${usd(c.purchases.daily)}, per week ${usd(c.purchases.weekly)}, per month ${usd(c.purchases.monthly)}.`);
+    lines.push(`- Paid from your own wallet (paid APIs, sends, swaps): per payment ${usd(c.purchases.perPayment)}, per day ${usd(c.purchases.daily)}, per week ${usd(c.purchases.weekly)}, per month ${usd(c.purchases.monthly)}.`);
     const k = c.allowedSellers.length;
     lines.push(
       k

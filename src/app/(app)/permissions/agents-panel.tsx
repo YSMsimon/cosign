@@ -145,7 +145,7 @@ function AgentPanel({ agent, wsId, canSeeSpend }: { agent: Agent; wsId: string; 
   const approver = ws.me.onchainApprover;
   const rank = (wsSpend.data?.agents ?? [])
     .filter((r) => activeIds.has(r.agentId))
-    .map((r) => ({ name: r.name, hue: agent.id === r.agentId ? agent.hue : (r.hue as AgentSetup["hue"]) ?? "blue", total: r.purchases + r.drafts, sub: `Drafts $${r.drafts.toFixed(2)} · APIs $${r.purchases.toFixed(2)}` }))
+    .map((r) => ({ name: r.name, hue: agent.id === r.agentId ? agent.hue : (r.hue as AgentSetup["hue"]) ?? "blue", total: r.purchases + r.drafts, sub: `Drafts $${r.drafts.toFixed(2)} · From its wallet $${r.purchases.toFixed(2)}` }))
     .sort((a, b) => b.total - a.total);
 
   return (

@@ -125,7 +125,7 @@ function TreasuryView({ d }: { d: TreasuryData }) {
               showLegend
               segments={[
                 { id: "pay", label: "Treasury payments", value: +w.payments.toFixed(2), tone: "selected" },
-                { id: "api", label: "Agents' API purchases", value: +w.apiPurchases.toFixed(2), tone: "info" },
+                { id: "api", label: "From agents' own wallets", value: +w.apiPurchases.toFixed(2), tone: "info" },
               ]}
             />
           </PanelCardContent>
@@ -245,7 +245,7 @@ function SampleTreasury() {
               showLegend
               segments={[
                 { id: "pay", label: "Treasury payments", value: +(w.payments + paidNow).toFixed(2), tone: "selected" },
-                { id: "api", label: "Agents' API purchases", value: w.apiPurchases, tone: "info" },
+                { id: "api", label: "From agents' own wallets", value: w.apiPurchases, tone: "info" },
               ]}
             />
           </PanelCardContent>

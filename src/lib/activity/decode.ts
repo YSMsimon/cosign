@@ -92,7 +92,7 @@ export function decodeStreamLog(log: StreamLog, names = addressBook()): NewActiv
     case "ProposalCreated":
       return { ...t, type: "proposal_created", proposalId: String(a.id), actor: String(a.proposer), counterparty: String(a.to), amountUsd: usd6(a.amount as bigint), summary: `${label(String(a.proposer))} drafted #${a.id}: $${usd6(a.amount as bigint)} → ${label(String(a.to))} ("${a.memo}")` };
     case "ProposalApproved":
-      return { ...t, type: "proposal_approved", proposalId: String(a.id), actor: String(a.approver), summary: `${label(String(a.approver))} cosigned #${a.id} (${a.approvals} approval${Number(a.approvals) > 1 ? "s" : ""})` };
+      return { ...t, type: "proposal_approved", proposalId: String(a.id), actor: String(a.approver), summary: `${label(String(a.approver))} approved #${a.id} (${a.approvals} approval${Number(a.approvals) > 1 ? "s" : ""})` };
     case "PaymentExecuted":
       return { ...t, type: "payment_executed", proposalId: String(a.id), counterparty: String(a.to), amountUsd: usd6(a.amount as bigint), summary: `Paid #${a.id}: $${usd6(a.amount as bigint)} → ${label(String(a.to))}` };
     case "ProposalCancelled":

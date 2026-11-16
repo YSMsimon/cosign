@@ -56,7 +56,7 @@ export function AgentAbout({ agent, onClose, info }: { agent: Agent; onClose: ()
           {i.usdc !== null ? <Usdc amount={i.usdc} /> : <span className="text-xs text-muted-foreground">…</span>}
         </span>
         <AddressSnippet address={i.wallet} label={`${agent.name}'s wallet address`} />
-        <span className="text-xs text-muted-foreground">Made when {agent.name} was created. Pays for APIs and network fees.</span>
+        <span className="text-xs text-muted-foreground">Made when {agent.name} was created. Pays for paid APIs, sends and network fees.</span>
       </div>
 
       <div className="flex flex-col gap-2">
