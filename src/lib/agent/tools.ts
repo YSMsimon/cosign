@@ -19,7 +19,7 @@ import { moneyLive, normalizeSeller, rulesFromPolicy, sellerAllowed, type Abilit
 export type AgentPolicy = {
   maxPerCallUsd: number; // x402 per-request cap
   allowedHosts: string[]; // x402 seller allowlist
-  maxProposalUsd: number; // biggest bill the agent may draft (humans still cosign)
+  maxProposalUsd: number; // biggest bill the agent may draft (a person still signs)
   allowedPayees: Address[]; // contacts the agent may draft bills to
   maxTopUpUsd: number; // per top-up request (contract also enforces the weekly cap)
   sandbox: boolean; // may use the microVM tools
@@ -147,8 +147,8 @@ export const TOOLS: ToolDef[] = [
     name: "list_proposals",
     kind: "read",
     description:
-      "The company treasury's payment proposals, newest first: number, payee, amount, memo, cosigns so far and status. " +
-      "Use it to answer what is waiting for a cosign. Only humans cosign, from their own wallets.",
+      "The company treasury's payment proposals, newest first: number, payee, amount, memo, signatures so far and status. " +
+      "Use it to answer what is waiting for a signature. Only people sign, from their own wallets.",
     parameters: obj({ status: str("'open' (default) or 'all': use 'all' whenever the person asks about paid, cancelled, past or all proposals") }),
     run: async (c, a) => {
       const t = c.treasury;
@@ -163,7 +163,7 @@ export const TOOLS: ToolDef[] = [
         const p = await readProposal(t, BigInt(i)); // settled ones come from the cache
         const status = p.executed ? "executed" : p.cancelled ? "cancelled" : "open";
         if (!all && status !== "open") continue;
-        out.push({ id: i, kind: kinds[p.kind] ?? "unknown", to: p.to.toLowerCase(), amountUsd: p.kind === 0 ? fmt(p.amount) : null, memo: p.memo, cosigns: `${p.approvals} of ${threshold}`, status });
+        out.push({ id: i, kind: kinds[p.kind] ?? "unknown", to: p.to.toLowerCase(), amountUsd: p.kind === 0 ? fmt(p.amount) : null, memo: p.memo, signatures: `${p.approvals} of ${threshold}`, status });
       }
       return { threshold, proposals: out };
     },
@@ -226,7 +226,7 @@ export const TOOLS: ToolDef[] = [
     run: async (c, a) => {
       const s = teamScope(c);
       const { mention } = await import("../server/team");
-      const { result, runLater } = await mention({ workspaceId: s.workspaceId, fromAgentId: s.agentId, memberId: s.memberId, fromTaskId: s.taskId ?? null, who: String(a.who ?? ""), message: String(a.message ?? "") });
+      const { result, runLater } = await mention({ workspaceId: s.workspaceId, fromAgentId: s.agentId, memberId: s.memberId, fromTaskId: s.taskId ?? null, roomId: s.roomId ?? null, who: String(a.who ?? ""), message: String(a.message ?? "") });
       void runLater?.(); // the mentioned agent works on its own; its answer comes back to the team feed
       return result;
     },
@@ -272,7 +272,7 @@ export const TOOLS: ToolDef[] = [
     name: "propose_payment",
     kind: "money",
     ability: "draft",
-    description: "Draft a payment from the company treasury to a saved contact. Nothing moves until a human approver cosigns. You can never approve.",
+    description: "Draft a payment from the company treasury to a saved contact. Nothing moves until an approver signs it in their own wallet. You can never approve.",
     parameters: obj({ to: str("payee address (must be a saved contact)"), amount_usd: str("amount in USDC, e.g. '2.40'"), memo: str("what this pays for") }, ["to", "amount_usd", "memo"]),
     check: (c, a) => {
       const r = rulesOf(c);
@@ -288,7 +288,7 @@ export const TOOLS: ToolDef[] = [
       const res = await proposePayment(c.agentRef, c.treasury, a.to as Address, String(a.amount_usd), String(a.memo));
       recordSpend(c.scope, "draft", Number(a.amount_usd), `proposal:${res.id}`);
       recordProposal(c.scope, c.treasury, res.id.toString(), { to: String(a.to), amountUsd: String(a.amount_usd), memo: String(a.memo), tx: res.hash });
-      return { proposalId: res.id.toString(), tx: res.hash, status: "awaiting human cosign" };
+      return { proposalId: res.id.toString(), tx: res.hash, status: "waiting for an approver to sign it in their own wallet" };
     },
   },
   {

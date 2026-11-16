@@ -1,5 +1,5 @@
 /**
- * How a paid API call reads on screen: "Paid $0.01 by nanopayment · invoice reader". A Gateway payment is a
+ * How a paid API call reads on screen: "Paid $0.01 by nanopayment · bill reader". A Gateway payment is a
  * nanopayment (signed off-chain, settled in batches); the plain x402 rail pays onchain for each call.
  * Shared by the chat's step lines and Grok Bot's task steps, so both say the same thing.
  */
@@ -8,7 +8,7 @@ const money = (x: unknown) => {
   return Number.isFinite(n) ? `$${n < 0.01 ? n.toFixed(3) : n.toFixed(2)}` : "";
 };
 
-/** "invoice reader" for one of our demo sellers (/api/sellers/<name>), else the API's host. */
+/** "bill reader" for one of our demo sellers (/api/sellers/<name>), else the API's host. */
 export function sellerName(url: unknown): string {
   try {
     const u = new URL(String(url));

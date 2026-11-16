@@ -32,8 +32,8 @@ const PAYABLES_FUNDING_USD = "1.5"; // gas + the Gateway balance its paid calls 
 const DEMO_SELLERS = ["localhost:3000/api/sellers", "x402.quicknode.com"];
 
 const CONTACTS = [
-  { name: "Oliver Grant", notes: "Contractor, frontend work. Invoices weekly." },
-  { name: "Northpine Hosting Inc.", notes: "Hosting for the app. Invoices monthly." },
+  { name: "Oliver Grant", notes: "Contractor, frontend work. Bills weekly." },
+  { name: "Northpine Hosting Inc.", notes: "Hosting for the app. Bills monthly." },
   { name: "Pixel Studio", notes: "Design studio: logo and brand kit." },
 ];
 
@@ -91,7 +91,7 @@ const save = (s: State) => writeFileSync(STATE, JSON.stringify(s, null, 2) + "\n
     agentNamed("Payables") ??
     (await createAgent(m, {
       name: "Payables",
-      prompt: "You pay the company's bills. Read an invoice with the invoice reader before paying it, check new payees with the vendor check, and draft payments for a person to cosign.",
+      prompt: "You pay the company's bills. To pay a bill, first read it with the bill reader (a paid API: list_allowed with list 'sellers' gives its URL), check a payee's address with the vendor check when asked or when it's new, then draft the payment for a person to sign.",
       visibility: "team",
       preset: "clerk",
       hue: "blue",
