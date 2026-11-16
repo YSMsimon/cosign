@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { CalendarClock, Landmark, Lock, Radio, UserPlus } from "lucide-react";
 import { DescriptionList } from "@/components/description-list";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -20,7 +20,7 @@ import { AddressLine, EXPLORER, LENA, TREASURY } from "./money";
 import { ApprovalRow, Refusal, Steps } from "./parts";
 import { InviteToRoomDialog, JoinRoomEmpty, ME, RoomIcon, RoomMembers } from "./rooms";
 import type { Agent } from "./agents";
-import { roomKey, useAgents, useLines, useRooms, useTeam, type Room, type Teammate } from "./store";
+import { roomKey, useAgents, useLines, useRooms, useTeam, type Line, type Room, type Teammate } from "./store";
 import { Tag } from "@/components/ui/tag";
 import { AgentSaid, ChainEvent, GrokSaid, PersonSaid, Words, YouSaid } from "./thread";
 
@@ -41,6 +41,8 @@ export type RoomReply = {
   running: boolean;
   /** a Grok Bot job that runs on this agent's own loop (no routine connected): the agent's turn, tagged Background */
   by?: string;
+  /** treasury proposals it drafted */
+  proposals?: string[];
 };
 
 /**
@@ -56,9 +58,23 @@ export type RoomAsk = (
 ) => Promise<RoomReply>;
 
 /**
+ * Where a room's messages live. The real app passes the server's (everyone in the room sees the same lines); without
+ * it the room keeps them in this browser, as the design board does.
+ */
+export type RoomStore = {
+  lines: Line[];
+  say: (line: Line) => void;
+  addMembers: (ids: string[]) => void;
+  /** a line the app draws itself (a background job that belongs to the room); null draws it as usual */
+  render?: (line: Line) => ReactNode | null;
+  /** drawn under an agent's answer: the approval cards of what it drafted */
+  below?: (line: Line) => ReactNode;
+};
+
+/**
  * A room: a shared conversation for teammates and agents. Everyone in it sees every message; an agent answers when
  * someone names it with @, following the room's guidelines. Payments an agent drafts here are approved here too.
- * Prototype: rooms and messages live in the browser (./store).
+ * The real app passes `store` (rooms on the server); the design board keeps rooms and messages in the browser (./store).
  */
 export function RoomView({
   room,
@@ -67,6 +83,7 @@ export function RoomView({
   ask,
   people,
   scope,
+  store,
 }: {
   room: Room;
   files: Picked[];
@@ -76,18 +93,22 @@ export function RoomView({
   people?: { agents: Agent[]; team: Teammate[] };
   /** keeps this room's messages apart per workspace (the real app passes the workspace id) */
   scope?: string;
+  /** the real app's rooms on the server */
+  store?: RoomStore;
 }) {
   const sample = { agents: useAgents().agents, team: useTeam().team };
   const { agents, team } = people ?? sample;
   const key = scope ? `${scope}:${roomKey(room.id)}` : roomKey(room.id);
-  const { addMembers } = useRooms();
-  const { lines, say } = useLines();
+  const local = useLines();
+  const { addMembers: addLocal } = useRooms();
+  const say = (line: Line) => (store ? store.say(line) : local.say(key, line));
+  const addMembers = (id: string, ids: string[]) => (store ? store.addMembers(ids) : addLocal(id, ids));
   const [inviting, setInviting] = useState(false);
   const [replying, setReplying] = useState<string | null>(null);
   const [paid, setPaid] = useState(false); // prototype: approving the contractor run shows Grok Bot's onchain check
   const [replies, setReplies] = useState<{ rid: string; author: string; reply: RoomReply }[]>([]); // real answers still coming
 
-  const extra = lines[key] ?? [];
+  const extra = store ? store.lines : (local.lines[key] ?? []);
   // only your latest message anchors the scroll (see the chat's thread view: the scroller jumps to the first anchor it
   // hasn't handled when an answer replaces its live copy)
   const lastYou = extra.findLastIndex((l) => l.who === "you");
@@ -118,25 +139,25 @@ export function RoomView({
     void run(to, text, room, update)
       .catch((e: Error): RoomReply => ({ ...start, running: false, error: e.message }))
       .then((r) => {
-        say(key, { who: "agent", author, text: r.text ?? "", steps: r.steps.length ? { title: r.title, lines: r.steps } : undefined, error: r.error, by: r.by });
+        say({ who: "agent", author, text: r.text ?? "", steps: r.steps.length ? { title: r.title, lines: r.steps } : undefined, error: r.error, by: r.by, proposals: r.proposals });
         setReplies((cur) => cur.filter((x) => x.rid !== rid));
       });
   };
 
   const send = (text: string, picked: Picked[]) => {
-    say(key, { who: "you", text, files: picked.length ? picked.map((f) => f.name) : undefined });
+    say({ who: "you", text, files: picked.length ? picked.map((f) => f.name) : undefined });
     if (ask) return askReal(text, ask);
     const [first] = mentionedIn(text, members).filter((m) => m.kind === "agent"); // room agents and Grok Bot
     if (!first) return;
     if (first.id === GROK_BOT.id) {
       /* Grok Bot works in the background: no typing dots, it reports when done */
-      setTimeout(() => say(key, { who: "agent", author: GROK_BOT.id, text: "(Prototype) On it in the background. I'll post here when it's done, and @ whoever needs to act." }), 1200);
+      setTimeout(() => say({ who: "agent", author: GROK_BOT.id, text: "(Prototype) On it in the background. I'll post here when it's done, and @ whoever needs to act." }), 1200);
       return;
     }
     const agent = roomAgents.find((a) => a.id === first.id)!;
     setReplying(agent.id);
     setTimeout(() => {
-      say(key, { who: "agent", author: agent.id, text: `(Prototype) ${agent.name} would answer here for #${room.name}, following its guidelines.` });
+      say({ who: "agent", author: agent.id, text: `(Prototype) ${agent.name} would answer here for #${room.name}, following its guidelines.` });
       setReplying(null);
     }, 1500);
   };
@@ -340,6 +361,14 @@ export function RoomView({
                     </>
                   )}
                   {extra.map((l, i) => {
+                    const own = store?.render?.(l);
+                    if (own) {
+                      return (
+                        <MessageScrollerItem key={l.id ?? i} messageId={l.id ?? `x${i}`}>
+                          {own}
+                        </MessageScrollerItem>
+                      );
+                    }
                     const agent = agents.find((a) => a.id === l.author);
                     const mate = team.find((t) => t.id === l.author);
                     const by = l.by ? agents.find((a) => a.name.toLowerCase() === l.by!.toLowerCase()) : undefined;
@@ -353,10 +382,11 @@ export function RoomView({
                           </Words>
                         )}
                         {l.error && <Refusal title="It stopped">{l.error}</Refusal>}
+                        {store?.below?.(l)}
                       </>
                     );
                     return (
-                      <MessageScrollerItem key={i} messageId={`x${i}`} scrollAnchor={l.who === "you" && i === lastYou}>
+                      <MessageScrollerItem key={l.id ?? i} messageId={l.id ?? `x${i}`} scrollAnchor={l.who === "you" && i === lastYou}>
                         {l.who === "you" ? (
                           <YouSaid line={l}>
                             <Said text={l.text} members={members} />

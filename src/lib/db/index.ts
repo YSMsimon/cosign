@@ -64,10 +64,18 @@ function open() {
 }
 
 /** Columns added after a table first shipped (CREATE TABLE IF NOT EXISTS never changes an existing table). */
-const MIGRATIONS = 1;
+const MIGRATIONS = 2;
 function migrate(sqlite: Database.Database) {
-  const cols = (sqlite.prepare("PRAGMA table_info(agents)").all() as { name: string }[]).map((c) => c.name);
-  if (!cols.includes("hue")) sqlite.exec("ALTER TABLE agents ADD COLUMN hue TEXT");
+  const colsOf = (t: string) => (sqlite.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map((c) => c.name);
+  if (!colsOf("agents").includes("hue")) sqlite.exec("ALTER TABLE agents ADD COLUMN hue TEXT");
+  // 2: shared rooms (2026-11-16), and the room a draft, a job or a mention belongs to
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS rooms (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, name TEXT NOT NULL, visibility TEXT NOT NULL, guidelines TEXT NOT NULL DEFAULT '', members TEXT NOT NULL DEFAULT '[]', created_by TEXT NOT NULL, created_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS rooms_ws ON rooms (workspace_id);
+    CREATE TABLE IF NOT EXISTS room_lines (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, workspace_id TEXT NOT NULL, author_kind TEXT NOT NULL, author_id TEXT, posted_by TEXT, body TEXT NOT NULL DEFAULT '{}', task_id TEXT, created_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS room_lines_room ON room_lines (room_id, created_at);
+  `);
+  for (const t of ["proposal_meta", "tasks", "team_messages"]) if (!colsOf(t).includes("room_id")) sqlite.exec(`ALTER TABLE ${t} ADD COLUMN room_id TEXT`);
   (globalThis as unknown as { __cosignMigrated?: number }).__cosignMigrated = MIGRATIONS;
 }
 

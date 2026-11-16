@@ -12,7 +12,7 @@ import { NeedsApproval, PolicyRefusal } from "../x402/buyer";
 import { moneyLive, type AgentRules, type Limits } from "./rules";
 
 /** Who is acting: the saved agent, its workspace, the member whose request this is, and the Grok Bot / schedule task if any. */
-export type RunScope = { agentId: string; workspaceId: string; memberId: string | null; taskId?: string | null };
+export type RunScope = { agentId: string; workspaceId: string; memberId: string | null; taskId?: string | null; roomId?: string | null };
 
 const HOUR = 3_600_000;
 const since = (ms: number) => new Date(Date.now() - ms).toISOString();
@@ -153,7 +153,7 @@ export type ProposalDrafted = {
 export function recordProposal(scope: RunScope | undefined, treasury: string, proposalId: string, d: { to: string; amountUsd: string; memo: string; tx: string }) {
   if (!scope) return;
   const at = new Date().toISOString();
-  const row = { treasury: treasury.toLowerCase(), proposalId, agentId: scope.agentId, requestedBy: scope.memberId, taskId: scope.taskId ?? null, createdAt: at };
+  const row = { treasury: treasury.toLowerCase(), proposalId, agentId: scope.agentId, requestedBy: scope.memberId, taskId: scope.taskId ?? null, roomId: scope.roomId ?? null, createdAt: at };
   db().insert(schema.proposalMeta).values(row).onConflictDoNothing().run();
   const event: ProposalDrafted = {
     workspaceId: scope.workspaceId,

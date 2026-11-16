@@ -25,6 +25,7 @@ import { agentSpend, workspaceSpend } from "./spend";
 import { handleMcp, issueMcpToken, mcpStatus, revokeMcpTokens } from "./mcp";
 import { listTeam } from "./team";
 import { listTeamMessages, type TeamMessageEvent } from "./team-feed";
+import { addRoomMembers, createRoom, listRoomLines, listRooms, memberRoom, postRoomLine, removeRoom } from "./rooms";
 import { safeEqual } from "./util";
 import { postCall, startVoice, voiceLlm, voiceStatus, voiceTaskFor } from "./voice";
 import {
@@ -145,6 +146,39 @@ route("GET", "/workspaces/:ws/tasks", (req, p) => {
   return { tasks: listTasks(m.workspace.id, visible) };
 });
 
+// rooms: shared conversations; everyone in a room sees the same messages (server/rooms.ts)
+const roomIdParam = z.string().regex(/^[A-Za-z0-9_-]{1,48}$/);
+const lineBody = z.object({
+  text: z.string().max(20_000).optional(),
+  steps: z.object({ title: z.string().max(200), lines: z.array(z.string().max(500)).max(100) }).optional(),
+  error: z.string().max(2000).optional(),
+  by: z.string().max(80).optional(),
+  via: z.literal("voice").optional(),
+  files: z.array(z.string().max(200)).max(20).optional(),
+  proposals: z.array(z.string().regex(/^\d{1,9}$/)).max(10).optional(),
+});
+route("GET", "/workspaces/:ws/rooms", (req, p) => ({ rooms: listRooms(requireMember(req, p.ws)) }));
+route("POST", "/workspaces/:ws/rooms", async (req, p) => {
+  const m = requireMember(req, p.ws);
+  const b = await parseBody(req, z.object({ name: z.string().trim().min(1).max(40), visibility: z.enum(["public", "private"]), guidelines: z.string().max(500).optional(), members: z.array(roomIdParam).max(50).optional() }));
+  return { room: createRoom(m, b) };
+});
+route("POST", "/workspaces/:ws/rooms/:room/members", async (req, p) => {
+  const m = requireMember(req, p.ws);
+  const b = await parseBody(req, z.object({ ids: z.array(roomIdParam).min(1).max(50) }));
+  return { room: addRoomMembers(m, roomIdParam.parse(p.room), b.ids) };
+});
+route("DELETE", "/workspaces/:ws/rooms/:room", (req, p) => removeRoom(requireMember(req, p.ws), roomIdParam.parse(p.room)));
+route("GET", "/workspaces/:ws/rooms/:room/lines", (req, p) => {
+  const m = requireMember(req, p.ws);
+  return { lines: listRoomLines(m, roomIdParam.parse(p.room), new URL(req.url).searchParams.get("after")) };
+});
+route("POST", "/workspaces/:ws/rooms/:room/lines", async (req, p) => {
+  const m = requireMember(req, p.ws);
+  const b = await parseBody(req, z.object({ kind: z.enum(["member", "agent", "grokbot"]), authorId: roomIdParam.nullable().optional(), body: lineBody }));
+  return { line: postRoomLine(m, roomIdParam.parse(p.room), b) };
+});
+
 // team: who agents can work with, and the feed of @mentions between agents and people (agents post with the mention tool)
 route("GET", "/workspaces/:ws/team", (req, p) => {
   const m = requireMember(req, p.ws);
@@ -220,7 +254,7 @@ route("POST", "/agents/:ag/chat", async (req, p) => {
   const b = await parseBody(req, z.object({ message: text, note: z.string().max(1000).optional(), room: z.string().regex(/^[A-Za-z0-9_-]{1,48}$/).optional() }));
   const thread = b.room ? roomThread(m.member.id, b.room) : memberThread(m.member.id);
   return sseTurn((onEvent) =>
-    runTurn(agent, m.workspace, { memberId: m.member.id, permissions: m.permissions }, thread, b.message, onEvent, null, { stream: true, turnNote: b.note }).then((r) => ({
+    runTurn(agent, m.workspace, { memberId: m.member.id, permissions: m.permissions }, thread, b.message, onEvent, null, { stream: true, turnNote: b.note, roomId: memberRoom(m, b.room) }).then((r) => ({
       finalText: r.finalText,
       totals: r.totals,
       estCostUsd: r.estCostUsd,

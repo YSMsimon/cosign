@@ -61,7 +61,13 @@ export function useRoomAsk(): RoomAsk {
             update(now(true));
           }, undefined, note, room.id);
           cur = { ...cur, text: done.finalText };
-          return now(false);
+          // what it drafted: the room shows each payment's approval card under the answer
+          const proposals = cur.steps
+            .filter((s) => s.name === "propose_payment")
+            .map((s) => (s.result as { proposalId?: unknown } | undefined)?.proposalId)
+            .filter((x): x is string | number => x !== undefined && x !== null)
+            .map(String);
+          return { ...now(false), ...(proposals.length ? { proposals } : {}) };
         } catch (e) {
           return { ...now(false), error: (e as Error).message };
         } finally {

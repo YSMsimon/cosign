@@ -9,6 +9,7 @@ import type { taskView } from "@/lib/server/grokbot";
 import type { PreparedTx } from "@/lib/server/http";
 import type { listApprovals, listProposals } from "@/lib/server/money";
 import type { listTeam } from "@/lib/server/team";
+import type { LineBody, lineView, roomView } from "@/lib/server/rooms";
 import type { startVoice } from "@/lib/server/voice";
 import type { listMembers, listRoles, myWorkspaces, workspaceDetail } from "@/lib/server/workspaces";
 import type { agentSpend, workspaceSpend } from "@/lib/server/spend";
@@ -25,6 +26,8 @@ export type Proposals = Awaited<ReturnType<typeof listProposals>>;
 export type Proposal = Proposals["proposals"][number];
 export type Approval = ReturnType<typeof listApprovals>[number];
 export type Team = ReturnType<typeof listTeam>;
+export type RoomData = ReturnType<typeof roomView>;
+export type RoomLineData = ReturnType<typeof lineView>;
 export type TeamMessage = TeamMessageRow;
 export type Thread = ReturnType<typeof readThread>;
 export type ThreadMessage = Thread["messages"][number];
@@ -103,6 +106,13 @@ export const api = {
   team: (ws: string) => get<Team>(`/workspaces/${ws}/team`),
   teamMessages: (ws: string, limit = 100) => get<{ messages: TeamMessage[] }>(`/workspaces/${ws}/team/messages?limit=${limit}`),
   tasks: (ws: string) => get<{ tasks: Task[] }>(`/workspaces/${ws}/tasks`),
+  // rooms: shared conversations (everyone in a room sees the same messages)
+  rooms: (ws: string) => get<{ rooms: RoomData[] }>(`/workspaces/${ws}/rooms`),
+  createRoom: (ws: string, b: { name: string; visibility: "public" | "private"; guidelines?: string; members?: string[] }) => post<{ room: RoomData }>(`/workspaces/${ws}/rooms`, b),
+  addRoomMembers: (ws: string, room: string, ids: string[]) => post<{ room: RoomData }>(`/workspaces/${ws}/rooms/${room}/members`, { ids }),
+  removeRoom: (ws: string, room: string) => call<{ ok: true }>("DELETE", `/workspaces/${ws}/rooms/${room}`),
+  roomLines: (ws: string, room: string) => get<{ lines: RoomLineData[] }>(`/workspaces/${ws}/rooms/${room}/lines`),
+  postRoomLine: (ws: string, room: string, b: { kind: "member" | "agent" | "grokbot"; authorId?: string | null; body: LineBody }) => post<{ line: RoomLineData }>(`/workspaces/${ws}/rooms/${room}/lines`, b),
   activity: (ws: string, limit = 50) => get<{ activity: Activity[] }>(`/workspaces/${ws}/activity?limit=${limit}`),
   spend: (ws: string, days = 30) => get<WorkspaceSpend>(`/workspaces/${ws}/spend?days=${days}`),
 

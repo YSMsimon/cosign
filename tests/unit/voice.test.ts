@@ -22,6 +22,7 @@ function voiceTask(over: Partial<TaskRow> = {}): TaskRow {
     workspaceId: "ws_unit",
     agentId: "ag_unit",
     kind: "voice",
+    roomId: null,
     source: "member",
     engine: "elevenlabs",
     instructions: "Voice conversation with the CFO",

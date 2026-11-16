@@ -172,6 +172,7 @@ export const proposalMeta = sqliteTable(
     agentId: text("agent_id"),
     requestedBy: text("requested_by"),
     taskId: text("task_id"),
+    roomId: text("room_id"), // drafted from a message in this room: its payment's Grok Bot check posts back there
     createdAt: text("created_at").notNull(),
   },
   (t) => [uniqueIndex("proposal_meta_pk").on(t.treasury, t.proposalId)],
@@ -208,6 +209,7 @@ export const tasks = sqliteTable("tasks", {
   progress: text("progress").notNull().default("[]"), // JSON [{t, message}]
   result: text("result"),
   error: text("error"),
+  roomId: text("room_id"), // shown in this room (a check of a payment drafted there), not in the agent's one-to-one chats
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
@@ -245,6 +247,38 @@ export const teamMessages = sqliteTable("team_messages", {
   fromTaskId: text("from_task_id"), // the run that made this message
   rootId: text("root_id").notNull(),
   depth: integer("depth").notNull().default(0), // agent-to-agent hand-offs in a row in this chain
+  roomId: text("room_id"), // made by a job that belongs to a room: shown there, not in one-to-one chats
+  createdAt: text("created_at").notNull(),
+});
+
+// ───────────── rooms: shared conversations for people and agents ─────────────
+
+/** A room. Everyone in it sees the same messages; public rooms anyone in the workspace can find and join. */
+export const rooms = sqliteTable("rooms", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  name: text("name").notNull(),
+  visibility: text("visibility").notNull(), // public | private
+  guidelines: text("guidelines").notNull().default(""),
+  members: text("members").notNull().default("[]"), // JSON: member ids and agent ids
+  createdBy: text("created_by").notNull(), // member id
+  createdAt: text("created_at").notNull(),
+});
+
+/**
+ * One message in a room. author_kind: member (a person typed it), agent (an agent's answer, posted by the person who
+ * asked it), grokbot (a Grok Bot job asked from the room), job (a background job that belongs to the room: the app
+ * shows the job itself, task_id, as it runs).
+ */
+export const roomLines = sqliteTable("room_lines", {
+  id: text("id").primaryKey(),
+  roomId: text("room_id").notNull(),
+  workspaceId: text("workspace_id").notNull(),
+  authorKind: text("author_kind").notNull(), // member | agent | grokbot | job
+  authorId: text("author_id"), // member id or agent id
+  postedBy: text("posted_by"), // member id, null when the server posted it (a job, a mention)
+  body: text("body").notNull().default("{}"), // JSON {text, steps, error, by, via, files}
+  taskId: text("task_id"),
   createdAt: text("created_at").notNull(),
 });
 
@@ -286,5 +320,7 @@ export type ConnectionRow = typeof grokbotConnections.$inferSelect;
 export type TaskRow = typeof tasks.$inferSelect;
 export type ScheduleRow = typeof schedules.$inferSelect;
 export type TeamMessageRow = typeof teamMessages.$inferSelect;
+export type RoomRow = typeof rooms.$inferSelect;
+export type RoomLineRow = typeof roomLines.$inferSelect;
 export type McpTokenRow = typeof mcpTokens.$inferSelect;
 export type FundingRequestRow = typeof fundingRequests.$inferSelect;

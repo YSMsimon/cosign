@@ -26,6 +26,7 @@ import type { Membership } from "./access";
 import { runContext, runTurn, type Actor } from "./chat";
 import { badRequest, forbidden, HttpError, notFound } from "./http";
 import { recordAgentReply } from "./team-feed";
+import { addJobLine } from "./rooms";
 import { decryptSecret, encryptSecret, id, newToken, sha256 } from "./util";
 
 const now = () => new Date().toISOString();
@@ -196,7 +197,7 @@ export function actorFor(memberId: string | null): Actor {
 export async function startTask(
   agent: AgentRow,
   ws: WorkspaceRow,
-  o: { kind: "ping" | "task"; source: "connect" | "member" | "schedule" | "agent" | "watch"; instructions: string; requestedBy: string | null; scheduleId?: string | null; base: string },
+  o: { kind: "ping" | "task"; source: "connect" | "member" | "schedule" | "agent" | "watch"; instructions: string; requestedBy: string | null; scheduleId?: string | null; base: string; roomId?: string | null },
 ): Promise<{ task: TaskRow; runLater?: () => Promise<void> }> {
   const c = connectionOf(agent.id);
   const useBot = !!c && (o.kind === "ping" || c.status === "connected");
@@ -219,10 +220,12 @@ export async function startTask(
     progress: "[]",
     result: null,
     error: null,
+    roomId: o.roomId ?? null,
     createdAt: now(),
     updatedAt: now(),
   };
   db().insert(schema.tasks).values(task).run();
+  addJobLine(task); // a job that belongs to a room shows there (it reports back in the room, not in one-to-one chats)
 
   if (useBot) {
     const err = await postWebhook(c!, webhookBody(task, agent, ws, token, expiresAt, o.base));

@@ -28,7 +28,7 @@ import { conflict, forbidden } from "./http";
 export type Actor = { memberId: string | null; permissions: readonly string[]; watch?: boolean };
 
 /** Everything one run needs. `vm: false` skips the microVM (Grok Bot calls, folder-only work). */
-export async function runContext(agent: AgentRow, ws: WorkspaceRow, actor: Actor, o: { taskId?: string | null; vm?: boolean } = {}) {
+export async function runContext(agent: AgentRow, ws: WorkspaceRow, actor: Actor, o: { taskId?: string | null; vm?: boolean; roomId?: string | null } = {}) {
   const rules = rulesOf(agent);
   const full = effectiveAbilities(rules, { canRequestPayments: actor.watch || can(actor.permissions, "payments.request") });
   const abilities = actor.watch ? { ...full, draft: false, pettyCash: false } : full;
@@ -44,7 +44,7 @@ export async function runContext(agent: AgentRow, ws: WorkspaceRow, actor: Actor
     agentRef: agent.ref,
     treasury: ws.treasury as Address,
     rules: { abilities, controls: rules.controls },
-    scope: { agentId: agent.id, workspaceId: ws.id, memberId: actor.memberId, taskId: o.taskId ?? null },
+    scope: { agentId: agent.id, workspaceId: ws.id, memberId: actor.memberId, taskId: o.taskId ?? null, roomId: o.roomId ?? null },
   };
   return { ctx, instructions, sandbox: sb };
 }
@@ -61,13 +61,13 @@ export async function runTurn(
   prompt: string,
   onEvent?: RunEventHandler,
   taskId?: string | null,
-  o: { turnNote?: string; via?: "voice"; stream?: boolean; model?: string } = {},
+  o: { turnNote?: string; via?: "voice"; stream?: boolean; model?: string; roomId?: string | null } = {},
 ) {
   const key = `${agent.ref}:${thread}`;
   if (locks.has(key)) throw conflict("this conversation is already running a turn; wait for it to finish");
   locks.add(key);
   try {
-    const { ctx, instructions } = await runContext(agent, ws, actor, { taskId });
+    const { ctx, instructions } = await runContext(agent, ws, actor, { taskId, roomId: o.roomId ?? null });
     return await runAgentTurn({ ctx, instructions, prompt, thread, quiet: true, onEvent, turnNote: o.turnNote, via: o.via, stream: o.stream, model: o.model });
   } finally {
     locks.delete(key);

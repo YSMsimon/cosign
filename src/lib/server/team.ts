@@ -111,7 +111,7 @@ function resolve(workspaceId: string, who: string): Target | null {
   return member ? { kind: "member", member } : null;
 }
 
-export type MentionInput = { workspaceId: string; fromAgentId: string; memberId: string | null; fromTaskId?: string | null; who: string; message: string; base?: string };
+export type MentionInput = { workspaceId: string; fromAgentId: string; memberId: string | null; fromTaskId?: string | null; roomId?: string | null; who: string; message: string; base?: string };
 export type MentionResult =
   | { refused: true; reason: string }
   | { posted: { id: string; to: { kind: "agent" | "person" | "grokbot"; id: string; name: string } }; task?: { id: string; engine: string; status: string; error?: string | null }; note?: string };
@@ -182,6 +182,7 @@ export async function mention(o: MentionInput): Promise<{ result: MentionResult;
     text: message,
     taskId: null,
     fromTaskId: o.fromTaskId ?? null,
+    roomId: o.roomId ?? null, // said while answering in a room: it shows there, not in one-to-one chats
     rootId,
     depth,
   });

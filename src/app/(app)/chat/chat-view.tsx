@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Rooms and agents, for real: the left side lists the rooms (still the design board's sample: rooms aren't wired) and
+ * Rooms and agents, for real: the left side lists the rooms (on the server: everyone in a room sees the same messages) and
  * the agents you can talk to; the middle is your conversation with the agent you picked, live as it works; the right
  * is its wallet and its place on the treasury. Same components and words as /mockups/v2/session.
  */
@@ -27,7 +27,7 @@ import { CallWords } from "../../mockups/v2/call-words";
 import { AgentOrb } from "../../mockups/v2/parts";
 import { RoomView } from "../../mockups/v2/room-view";
 import { InviteTeammateDialog, JoinRoomDialog, ME, NewRoomDialog, RoomList } from "../../mockups/v2/rooms";
-import { SAMPLE_ROOM_IDS, sampleRoomsOn, useAgents as useSampleAgents, useRooms, useTeam as useSampleTeam } from "../../mockups/v2/store";
+import { SAMPLE_ROOM_IDS, sampleRoomsOn, useAgents as useSampleAgents, useRooms, useTeam as useSampleTeam, type Room } from "../../mockups/v2/store";
 import { aboutInfo, hueOf, useAgentsData } from "../agents-data";
 import { AppShell, initialsOf } from "../app-shell";
 import { useCosign, useLive } from "../cosign";
@@ -39,6 +39,7 @@ import { ToolCard } from "./cards";
 import { FundingCard } from "./funding-card";
 import { useRoomAsk } from "./room-ask";
 import { useRealRooms } from "./rooms-data";
+import { ServerRoom, useServerRooms } from "./rooms-store";
 import { useVoiceCall, type Phase } from "./voice";
 
 const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
@@ -53,10 +54,15 @@ export function ChatView() {
   const params = useSearchParams();
   const { wsId, ws, can, address } = useCosign();
   const agentsData = useAgentsData();
-  const { rooms: allRooms, add: addRoom, addMembers, remove: removeRoom } = useRooms();
-  // not the design board's made-up rooms: a new browser (a teammate's, a judge's) would show them as if they were real
-  // (the rooms list renders only after the client has loaded you, so reading localStorage here can't mismatch the server)
-  const savedRooms = sampleRoomsOn() ? allRooms : allRooms.filter((r) => !SAMPLE_ROOM_IDS.has(r.id));
+  // rooms live on the server (everyone in one sees the same messages); the browser's sample rooms only come back for
+  // the browser tests that turn them on (localStorage cosign-sample-rooms = "1")
+  const localRooms = useRooms();
+  const serverRooms = useServerRooms();
+  const sampleOn = sampleRoomsOn();
+  const savedRooms = sampleOn ? localRooms.rooms : serverRooms.rooms.filter((r) => !SAMPLE_ROOM_IDS.has(r.id));
+  const addRoom = (r: Room): Promise<string> => (sampleOn ? (localRooms.add(r), Promise.resolve(r.id)) : serverRooms.add(r));
+  const addMembers = (id: string, ids: string[]) => (sampleOn ? localRooms.addMembers(id, ids) : void serverRooms.addMembers(id, ids));
+  const removeRoom = (id: string) => (sampleOn ? localRooms.remove(id) : void serverRooms.remove(id));
   const { team: sampleTeam } = useSampleTeam();
   const { agents: sampleAgents } = useSampleAgents();
   const agents = agentsData.usable;
@@ -292,8 +298,7 @@ export function ChatView() {
             team={real.team}
             agents={real.agents}
             onCreate={(r) => {
-              addRoom(r);
-              selectRoom(r.id);
+              void addRoom(r).then(selectRoom);
             }}
           />
           <JoinRoomDialog
@@ -341,7 +346,11 @@ export function ChatView() {
 
         {room ? (
           <main className="flex min-w-0 flex-1 flex-col">
-            <RoomView key={room.id} room={room} files={files} setFiles={setFiles} ask={roomAsk} people={real} scope={wsId} />
+            {sampleOn ? (
+              <RoomView key={room.id} room={room} files={files} setFiles={setFiles} ask={roomAsk} people={real} scope={wsId} />
+            ) : (
+              <ServerRoom key={room.id} room={room} files={files} setFiles={setFiles} ask={roomAsk} people={real} />
+            )}
           </main>
         ) : agent ? (
           <main className="flex min-w-0 flex-1">

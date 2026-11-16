@@ -22,6 +22,11 @@ export type Line = {
   error?: string;
   /** a Grok Bot job that ran on the agent's own loop: shown as that agent's turn, tagged Background */
   by?: string;
+  /** the real app's rooms: the line's id, and the background job it shows (the app draws the job as it runs) */
+  id?: string;
+  job?: string;
+  /** treasury proposals an agent's answer drafted (the real app shows their approval cards) */
+  proposals?: string[];
 };
 
 /** A person in the workspace. They sign in with their wallet; `invited` until they first do. */

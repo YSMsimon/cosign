@@ -17,6 +17,7 @@ import { AgentSaid, ChainEvent, GrokSaid, Words } from "../../mockups/v2/thread"
 import { hueOf, useAgentsData } from "../agents-data";
 import { useCosign } from "../cosign";
 import { ToolCard } from "./cards";
+import { stepLine } from "./steps";
 import type { Extra, ToolCall } from "./thread-view";
 
 export const STATUS: Record<string, string> = {
@@ -28,17 +29,25 @@ export const STATUS: Record<string, string> = {
   failed: "Couldn't finish",
 };
 
+/** A step Grok Bot recorded ("list_allowed · ok"), in the same words as the agent's own steps ("Looked up who it may pay"). */
+function botStep(message: string): string {
+  const m = /^([a-z_]+)(?: \(MCP\))? · (ok|refused: .*|error: .*)$/.exec(message);
+  if (!m) return message; // already in words: a paid call ("Paid $0.01 by nanopayment · invoice reader") or a note
+  const label = m[1] === "mention" ? "Mentioned someone on the team" : stepLine(m[1], {}, null).label;
+  return m[2] === "ok" ? label : m[2].startsWith("refused") ? `${label} · refused` : `${label} · failed`;
+}
+
 /** One background job: what was asked, what it did (its recorded steps), its result, and any payment it drafted. */
-function JobView({ task, agent }: { task: Task; agent: Agent }) {
+export function JobView({ task, agent }: { task: Task; agent: Agent }) {
   const { wsId } = useCosign();
   const proposals = useData(`proposals:${wsId}`, () => api.proposals(wsId));
   const drafted = (proposals.data?.proposals ?? []).filter((p) => p.taskId === task.id);
   const running = !["done", "failed"].includes(task.status);
-  const tools = task.progress.filter((p) => p.kind === "tool").map((p) => p.message);
-  const notes = task.progress.filter((p) => p.kind !== "tool").map((p) => p.message);
+  // in the order they happened: Grok Bot's notes and its tool calls, the calls in plain words
+  const steps = task.progress.map((p) => (p.kind === "tool" ? botStep(p.message) : p.message));
   const body = (
     <>
-      <Steps running={running} title={task.source === "watch" ? `${STATUS[task.status] ?? task.status} · checking it` : `${STATUS[task.status] ?? task.status} · ${task.instructions.length > 70 ? `${task.instructions.slice(0, 67)}…` : task.instructions}`} steps={[...notes, ...tools]} />
+      <Steps running={running} title={task.source === "watch" ? `${STATUS[task.status] ?? task.status} · checking it` : `${STATUS[task.status] ?? task.status} · ${task.instructions.length > 70 ? `${task.instructions.slice(0, 67)}…` : task.instructions}`} steps={steps} />
       {(task.result || task.error) && (
         <Words>
           <Said text={task.result ?? `Couldn't finish: ${task.error}`} members={[]} />
@@ -96,7 +105,8 @@ export function useChatExtras(agent: Agent | undefined, view: AgentView | undefi
   const me = ws.me.memberId;
   // background jobs only: not voice calls (they are the conversation itself) and not Grok Bot's connection checks
   // and the jobs Grok Bot starts itself when money moves onchain (source "watch"), for everyone who sees this agent
-  const jobs = agent ? tasks.filter((t) => t.agentId === agent.id && t.kind === "task" && (t.requestedBy === me || t.source === "watch")) : [];
+  // a job that belongs to a room (a check of a payment drafted there) shows in that room, not here
+  const jobs = agent ? tasks.filter((t) => t.agentId === agent.id && t.kind === "task" && !t.roomId && (t.requestedBy === me || t.source === "watch")) : [];
   // a job's steps and result arrive while it runs (no live event for those): look again every 2 s until it ends
   const running = jobs.some((t) => !["done", "failed"].includes(t.status));
   useEffect(() => {
@@ -107,7 +117,7 @@ export function useChatExtras(agent: Agent | undefined, view: AgentView | undefi
   if (!agent || !view) return [];
   const mine = new Set(jobs.map((t) => t.id));
   const messages = (feed.data?.messages ?? []).filter(
-    (m) => (m.fromKind === "agent" && m.fromId === agent.id) || (m.toKind === "agent" && m.toId === agent.id) || (m.fromTaskId && mine.has(m.fromTaskId)),
+    (m) => !m.roomId && ((m.fromKind === "agent" && m.fromId === agent.id) || (m.toKind === "agent" && m.toId === agent.id) || (m.fromTaskId && mine.has(m.fromTaskId))),
   );
   return [
     ...jobs.map((t) => ({ key: `job-${t.id}`, t: t.createdAt, node: <JobView task={t} agent={agent} /> })),

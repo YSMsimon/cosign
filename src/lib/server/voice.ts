@@ -247,6 +247,7 @@ export async function startVoice(m: Membership, agent: AgentRow, o: { signedUrl?
     progress: "[]",
     result: null,
     error: null,
+    roomId: null,
     createdAt: now(),
     updatedAt: now(),
   };

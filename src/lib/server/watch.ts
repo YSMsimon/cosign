@@ -15,6 +15,7 @@ import { readProposal } from "../arc";
 import { db, schema } from "../db";
 import type { ActivityRow, AgentRow } from "../db/schema";
 import { connectionOf, publicBase, startTask } from "./grokbot";
+import { roomOfProposal } from "./rooms";
 
 const FRESH_SEC = 600;
 const PER_WINDOW = 6; // jobs per company per window
@@ -57,8 +58,8 @@ async function jobFor(r: ActivityRow, treasury: string): Promise<{ instructions:
         `Onchain · paid proposal #${r.proposalId}: ${money(r.amountUsd)} to ${who(r.counterparty)}, ${seen}`,
         "",
         `The company treasury just paid proposal #${r.proposalId}: ${money(r.amountUsd)} to ${r.counterparty}${memo}, ${tx}.`,
-        "Check this payment: confirm the payee is a saved contact (list_allowed). When the memo names an invoice, read that invoice (paid_fetch on the invoice reader) and add up everything the treasury has paid for that invoice (list_proposals with status 'all'), so a payment that completes an earlier partial one counts as paid in full.",
-        "If something doesn't match (a different payee, or less or more paid than the invoice), say so plainly with the numbers and the exact amount missing or overpaid, and mention a person who approves. Don't draft a fix yourself: a person decides. If it's right, report it in one or two lines with the proposal number.",
+        "Check this payment: confirm the payee is a saved contact (list_allowed). When the memo names a bill (or an invoice), read that bill (paid_fetch on the bill reader) and add up everything the treasury has paid for that bill (list_proposals with status 'all'), so a payment that completes an earlier partial one counts as paid in full.",
+        "If something doesn't match (a different payee, or less or more paid than the bill), say so plainly with the numbers and the exact amount missing or overpaid, and mention a person who approves. Don't draft a fix yourself: a person decides. If it's right, report it in one or two lines with the proposal number.",
         "Write it for a person: name the payee, and don't paste wallet addresses or transaction hashes (the app links them).",
       ].join("\n"),
     };
@@ -93,7 +94,9 @@ export async function onNewActivity(rows: ActivityRow[]) {
       if (!job) continue;
       const agent = handlerFor(ws.id, job.proposer);
       if (!agent || !underLimit(ws.id)) continue;
-      const { task } = await startTask(agent, ws, { kind: "task", source: "watch", instructions: job.instructions, requestedBy: null, base: publicBase("http://localhost:3000") });
+      // a payment drafted in a room is checked in that room
+      const roomId = r.type === "payment_executed" && r.proposalId ? roomOfProposal(ws.treasury, String(r.proposalId)) : null;
+      const { task } = await startTask(agent, ws, { kind: "task", source: "watch", instructions: job.instructions, requestedBy: null, base: publicBase("http://localhost:3000"), roomId });
       console.info(`[watch] ${job.instructions.split("\n")[0]} → Grok Bot job ${task.id} for ${agent.name} (${task.status})`);
     } catch (e) {
       console.warn(`[watch] couldn't start a Grok Bot job for ${key}: ${(e as Error).message}`);

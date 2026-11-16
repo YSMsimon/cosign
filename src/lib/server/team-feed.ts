@@ -6,18 +6,32 @@ import { desc, eq } from "drizzle-orm";
 import { activityBus } from "../activity/store";
 import { db, schema } from "../db";
 import type { TaskRow, TeamMessageRow } from "../db/schema";
+import { appendRoomLine, roomOfTask } from "./rooms";
 import { id } from "./util";
 
-export type TeamMessageInput = Omit<TeamMessageRow, "id" | "createdAt">;
+export type TeamMessageInput = Omit<TeamMessageRow, "id" | "createdAt" | "roomId"> & { roomId?: string | null };
 
 /** Live event for the workspace stream: `team.message`. */
 export type TeamMessageEvent = { workspaceId: string; message: TeamMessageRow };
 
 export function postTeamMessage(m: TeamMessageInput): TeamMessageRow {
-  const row: TeamMessageRow = { ...m, id: id("tm"), createdAt: new Date().toISOString() };
+  // a message made by a job that belongs to a room is said in that room (an answer in a room turn already is)
+  const jobRoom = roomOfTask(m.fromTaskId);
+  const row: TeamMessageRow = { ...m, roomId: m.roomId ?? jobRoom, id: id("tm"), createdAt: new Date().toISOString() };
   db().insert(schema.teamMessages).values(row).run();
+  if (jobRoom && row.fromKind === "agent") appendRoomLine(jobRoom, { authorKind: "agent", authorId: row.fromId, body: { text: withMention(row) } });
   activityBus.emit("team.message", { workspaceId: row.workspaceId, message: row } satisfies TeamMessageEvent);
   return row;
+}
+
+/** The text with whoever it names in front ("@Simon …"), as a room shows it. */
+function withMention(m: TeamMessageRow): string {
+  if (!m.toId) return m.text;
+  const name =
+    m.toKind === "member"
+      ? db().select({ title: schema.members.title }).from(schema.members).where(eq(schema.members.id, m.toId)).get()?.title
+      : db().select({ name: schema.agents.name }).from(schema.agents).where(eq(schema.agents.id, m.toId)).get()?.name;
+  return name && !m.text.includes(`@${name}`) ? `@${name} ${m.text}` : m.text;
 }
 
 /** The mention that started this task, if a teammate's mention started it. */

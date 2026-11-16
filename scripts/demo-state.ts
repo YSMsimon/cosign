@@ -4,6 +4,7 @@
  *   pnpm tsx --env-file=.env.local scripts/demo-state.ts save <name>      e.g. save seeded
  *   pnpm tsx --env-file=.env.local scripts/demo-state.ts restore <name>
  *   pnpm tsx --env-file=.env.local scripts/demo-state.ts rooms <name>     after save: adds the browser's rooms (see below)
+ *   pnpm tsx --env-file=.env.local scripts/demo-state.ts rooms <name> emma   the same for Emma's browser (her own rooms)
  *   pnpm tsx --env-file=.env.local scripts/demo-state.ts list
  *   then: sh node_modules/.cosign-tmp/walcheck.sh
  *
@@ -13,9 +14,8 @@
  *   - the app's rows for the company: agents (their settings, e.g. Pixel Studio off), members, contacts, background
  *     jobs, team messages (mentions), approval and funding requests;
  *   - the treasury's proposal count, so restore knows which drafts are new;
- *   - browser.json, if present: this company's rooms from your browser. `save` puts a console line on your clipboard;
- *     paste it into the browser console on localhost:3000 (it copies the rooms), then run `rooms <name>`. Restore puts
- *     a console line on the clipboard that merges them back.
+ *   - the company's rooms and every message in them (rooms live on the server since 2026-11-16: both windows see the
+ *     same room). Older snapshots kept the browser's rooms in browser.json; restore still pastes those back.
  *
  * What restore does: cancels drafts made since the save that are still open (as the agent that drafted them; a paid
  * payment stays paid, the chain can't be rewound), puts the files and rows back, retires agents made since the save
@@ -51,10 +51,15 @@ type Rows = {
   teamMessages: (typeof schema.teamMessages.$inferSelect)[];
   approvalRequests: (typeof schema.approvalRequests.$inferSelect)[];
   fundingRequests: (typeof schema.fundingRequests.$inferSelect)[];
+  /** absent in snapshots saved before rooms moved to the server */
+  rooms?: (typeof schema.rooms.$inferSelect)[];
+  roomLines?: (typeof schema.roomLines.$inferSelect)[];
 };
 type Meta = { company: string; workspaceId: string; treasury: string; proposalCount: number; savedAt: string };
 
 const stamp = () => new Date().toISOString().replace(/[:.]/g, "-");
+/** Before 2026-11-16 rooms lived in the browser and `save` copied a console line to collect them. */
+const SAVE_BROWSER_ROOMS = false;
 const toTrash = (p: string, label: string) => {
   if (existsSync(p)) renameSync(p, join(TRASH, `cosign-${label}-${stamp()}`));
 };
@@ -80,6 +85,8 @@ function rowsOf(wsId: string): Rows {
     teamMessages: db().select().from(schema.teamMessages).where(w(schema.teamMessages)).all(),
     approvalRequests: db().select().from(schema.approvalRequests).where(w(schema.approvalRequests)).all(),
     fundingRequests: db().select().from(schema.fundingRequests).where(w(schema.fundingRequests)).all(),
+    rooms: db().select().from(schema.rooms).where(w(schema.rooms)).all(),
+    roomLines: db().select().from(schema.roomLines).where(w(schema.roomLines)).all(),
   };
 }
 
@@ -87,23 +94,26 @@ function rowsOf(wsId: string): Rows {
 const roomsCopyLine = (wsId: string) =>
   `copy(JSON.stringify({ rooms: localStorage.getItem("cosign-mock-rooms"), lines: Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem("cosign-mock-lines") || "{}")).filter(([k]) => k.startsWith(${JSON.stringify(wsId + ":")}))) }))`;
 
-function rooms(name: string) {
+function rooms(name: string, who?: string) {
   const dir = join(ROOT, name);
   if (!existsSync(join(dir, "meta.json"))) throw new Error(`no snapshot "${name}"`);
   const raw = execFileSync("pbpaste", { encoding: "utf8" });
   const b = JSON.parse(raw) as { rooms?: unknown; lines?: unknown };
   if (typeof b.rooms !== "string" || !b.lines || typeof b.lines !== "object") throw new Error("the clipboard doesn't hold the rooms; paste the console line from save first");
-  writeFileSync(join(dir, "browser.json"), raw);
-  console.log(`saved the rooms into "${name}": ${Object.keys(b.lines).length} room(s) with messages`);
+  const file = who === "emma" ? "browser-emma.json" : "browser.json"; // rooms live in each browser: yours and Emma's are kept apart
+  writeFileSync(join(dir, file), raw);
+  console.log(`saved ${who === "emma" ? "Emma's" : "your"} rooms into "${name}": ${Object.keys(b.lines).length} room(s) with messages`);
 }
 
 async function save(name: string) {
   const ws = company();
   const dir = join(ROOT, name);
   const keptRooms = existsSync(join(dir, "browser.json")) ? readFileSync(join(dir, "browser.json"), "utf8") : null;
+  const keptEmma = existsSync(join(dir, "browser-emma.json")) ? readFileSync(join(dir, "browser-emma.json"), "utf8") : null;
   if (existsSync(dir)) toTrash(dir, `snapshot-${name}`); // a re-save replaces the old one (kept in the Trash)
   mkdirSync(dir, { recursive: true });
   if (keptRooms) writeFileSync(join(dir, "browser.json"), keptRooms); // the rooms from the last save, until `rooms` replaces them
+  if (keptEmma) writeFileSync(join(dir, "browser-emma.json"), keptEmma);
   const rows = rowsOf(ws.id);
   for (const a of rows.agents) {
     const src = parts(a.ref);
@@ -117,7 +127,8 @@ async function save(name: string) {
   const meta: Meta = { company: COMPANY, workspaceId: ws.id, treasury: ws.treasury, proposalCount: count, savedAt: new Date().toISOString() };
   writeFileSync(join(dir, "meta.json"), JSON.stringify(meta, null, 2));
   writeFileSync(join(dir, "rows.json"), JSON.stringify(rows, null, 2));
-  console.log(`saved "${name}": ${rows.agents.length} agents, ${rows.tasks.length} jobs, ${rows.teamMessages.length} team messages, ${count} proposals so far → ${dir}`);
+  console.log(`saved "${name}": ${rows.agents.length} agents, ${rows.tasks.length} jobs, ${rows.teamMessages.length} team messages, ${rows.rooms?.length ?? 0} rooms (${rows.roomLines?.length ?? 0} messages), ${count} proposals so far → ${dir}`);
+  if (!SAVE_BROWSER_ROOMS) return; // rooms are on the server and in rows.json
   execFileSync("pbcopy", { input: roomsCopyLine(ws.id) });
   console.log(
     `${keptRooms ? "kept the rooms from the last save. To save the rooms as they are now: " : "rooms live in your browser: "}a console line is on your clipboard. Paste it into the browser console on localhost:3000, then run: demo-state.ts rooms ${name}`,
@@ -160,7 +171,7 @@ async function restore(name: string) {
       console.log(`2. retired ${a.name} (made since the save)`);
     }
     for (const a of saved.agents) tx.update(schema.agents).set(a).where(eq(schema.agents.id, a.id)).run();
-    const swap = <R extends { id: string }>(table: typeof schema.tasks | typeof schema.teamMessages | typeof schema.approvalRequests | typeof schema.fundingRequests | typeof schema.members | typeof schema.contacts, rows: R[]) => {
+    const swap = <R extends { id: string }>(table: typeof schema.tasks | typeof schema.teamMessages | typeof schema.approvalRequests | typeof schema.fundingRequests | typeof schema.members | typeof schema.contacts | typeof schema.rooms | typeof schema.roomLines, rows: R[]) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the same delete/insert for six tables with the same workspace column
       const tb = table as any;
       tx.delete(tb).where(eq(tb.workspaceId, ws.id)).run();
@@ -172,6 +183,11 @@ async function restore(name: string) {
     swap(schema.teamMessages, saved.teamMessages);
     swap(schema.approvalRequests, saved.approvalRequests);
     swap(schema.fundingRequests, saved.fundingRequests);
+    if (saved.rooms) {
+      // rooms made since the save go, and each saved room's messages are exactly as saved
+      swap(schema.roomLines, saved.roomLines ?? []);
+      swap(schema.rooms, saved.rooms);
+    }
     // the limits' counters as they were at the save (a take's drafts and calls would otherwise count against the next)
     if (saved.agents.length) {
       tx.delete(schema.agentSpend)
@@ -179,7 +195,7 @@ async function restore(name: string) {
         .run();
     }
   });
-  console.log(`2. rows back: ${saved.tasks.length} jobs, ${saved.teamMessages.length} team messages, ${saved.members.length} members, ${saved.contacts.length} contacts; agent settings as saved`);
+  console.log(`2. rows back: ${saved.tasks.length} jobs, ${saved.teamMessages.length} team messages, ${saved.rooms?.length ?? 0} rooms (${saved.roomLines?.length ?? 0} messages), ${saved.members.length} members, ${saved.contacts.length} contacts; agent settings as saved`);
 
   // 3. the conversations and memory files
   for (const a of saved.agents) {
@@ -218,30 +234,38 @@ async function restore(name: string) {
     } else console.log(`4. Payables: wallet $${bal.toFixed(2)}, Gateway $${gw.toFixed(2)}`);
   }
 
-  // 5. the rooms in your browser
+  // 5. older snapshots: the rooms each browser kept (yours on the clipboard; Emma's in a file to paste in her window)
+  const emmaRooms = join(dir, "browser-emma.json");
+  if (!saved.rooms && existsSync(emmaRooms)) {
+    const e = JSON.parse(readFileSync(emmaRooms, "utf8")) as { rooms: string; lines: Record<string, unknown> };
+    const line = `localStorage.setItem("cosign-mock-rooms", ${JSON.stringify(e.rooms)}); const l = JSON.parse(localStorage.getItem("cosign-mock-lines") || "{}"); for (const k of Object.keys(l)) if (k.startsWith(${JSON.stringify(meta.workspaceId + ":")})) delete l[k]; Object.assign(l, ${JSON.stringify(e.lines)}); localStorage.setItem("cosign-mock-lines", JSON.stringify(l)); location.reload();`;
+    writeFileSync(join(ROOT, "emma-rooms.js"), line);
+    console.log(`5. Emma's rooms: pbcopy < ${join(ROOT, "emma-rooms.js")}, then paste into the console in Emma's window`);
+  }
   const browser = join(dir, "browser.json");
-  if (existsSync(browser)) {
+  if (saved.rooms) console.log(`5. rooms: ${saved.rooms.length} on the server, as saved (both windows see them)`);
+  else if (existsSync(browser)) {
     const b = JSON.parse(readFileSync(browser, "utf8")) as { rooms: string; lines: Record<string, unknown> };
     // the room list as saved; each saved room's lines merged into the browser's (other companies' rooms untouched)
     const js = `localStorage.setItem("cosign-mock-rooms", ${JSON.stringify(b.rooms)}); const l = JSON.parse(localStorage.getItem("cosign-mock-lines") || "{}"); Object.assign(l, ${JSON.stringify(b.lines)}); localStorage.setItem("cosign-mock-lines", JSON.stringify(l)); location.reload();`;
     execFileSync("pbcopy", { input: js });
     console.log("5. rooms: a console line is on your clipboard; paste it into the browser console on localhost:3000");
   } else console.log("5. no browser.json in this snapshot: rooms stay as they are in the browser");
-  // Oliver's weekly invoices (122+): the next one no proposal has named yet, for Emma to ask about in this take
+  // Oliver's weekly bills (122+): the next one no proposal has named yet, for Emma to ask about in this take
   const used = new Set<number>();
   const total = Number(await chain.readContract({ address: t, abi: companyTreasuryAbi, functionName: "proposalCount" }));
   for (let pid = 0; pid < total; pid++) {
-    const m = /invoice\s*#?(\d+)/i.exec((await readProposal(t, BigInt(pid))).memo);
+    const m = /(?:bill|invoice)\s*#?(\d+)/i.exec((await readProposal(t, BigInt(pid))).memo);
     if (m) used.add(Number(m[1]));
   }
   let fresh = 122;
   while (used.has(fresh)) fresh++;
-  console.log(`6. Emma's beat this take: "Read invoice ${fresh}, check Oliver's address with the vendor check, and draft the payment."`);
+  console.log(`6. Emma's beat this take, in the room: "@Payables Read bill ${fresh}, check Oliver's address with the vendor check, and draft the payment."`);
   console.log(`\nrestored "${name}" (saved ${meta.savedAt}). Reload the app in both windows.`);
 }
 
 (async () => {
-  const [cmd, name] = process.argv.slice(2);
+  const [cmd, name, who] = process.argv.slice(2);
   if (cmd === "list") {
     if (!existsSync(ROOT)) return console.log("no snapshots yet");
     for (const n of readdirSync(ROOT)) {
@@ -252,10 +276,10 @@ async function restore(name: string) {
       }
     }
   } else if ((cmd === "save" || cmd === "restore" || cmd === "rooms") && name && /^[a-z0-9-]+$/.test(name)) {
-    if (cmd === "rooms") rooms(name);
+    if (cmd === "rooms") rooms(name, who);
     else await (cmd === "save" ? save(name) : restore(name));
   } else {
-    console.log("usage: demo-state.ts save <name> | rooms <name> | restore <name> | list   (name: lowercase letters, digits, dashes)");
+    console.log("usage: demo-state.ts save <name> | rooms <name> [emma] | restore <name> | list   (name: lowercase letters, digits, dashes)");
   }
   process.exit(0);
 })().catch((e) => {
