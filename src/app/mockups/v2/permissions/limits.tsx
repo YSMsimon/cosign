@@ -39,7 +39,7 @@ const FULL: Record<LimitKey, string> = {
 };
 /** The weekly refill lives on the treasury contract: saving it asks an approver to sign. */
 const ONCHAIN: LimitKey[] = ["pcPerWeek"];
-export const fmt = (k: LimitKey, v: number) => (k === "perHour" ? `${v} an hour` : k === "swapMove" ? `${v}%` : usd(v));
+export const fmt = (k: LimitKey, v: number) => (k === "askAbove" && v <= 0 ? "Off" : k === "perHour" ? `${v} an hour` : k === "swapMove" ? `${v}%` : usd(v));
 
 export const limitsOf = (a: AgentSetup): Limits => {
   const c = a.controls;

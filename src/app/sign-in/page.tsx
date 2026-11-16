@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, RefreshCw, Wallet } from "lucide-react";
 import { ConnectorList, type ConnectorOption } from "@/components/onchain-ui/connector-list";
-import { OrbStack } from "@/components/orb-avatar";
 import { UserRow } from "@/components/user-row";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -14,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { clearData } from "@/lib/client/data";
 import { connectWallet, shortAddr, signInWith, useWalletProviders, walletErrorText, type FoundWallet } from "@/lib/client/wallet";
+import { AgentOrb } from "../mockups/v2/parts";
 
 /** Wallets found in this browser. (WalletConnect needs a project id we don't have, so it isn't offered.) */
 const options = (found: FoundWallet[]): ConnectorOption[] => found.map((w) => ({ id: w.id, name: w.name, icon: w.icon || null, description: "Found in this browser" }));
@@ -66,7 +66,12 @@ export default function SignInPage() {
     <main className="flex min-h-screen justify-center bg-background px-8 pt-[14vh] pb-8 text-foreground">
       {/* pinned near the top, not centred, so the heading stays still when the wallet list grows */}
       <div className="flex w-full max-w-sm flex-col items-center gap-5 text-center">
-        <OrbStack hues={["blue", "violet", "teal"]} orbClassName="size-9" />
+        {/* the same live orbs the agents use (moving shapes), overlapped like a stack */}
+        <div className="flex -space-x-1.5">
+          {(["blue", "violet", "teal"] as const).map((hue) => (
+            <AgentOrb key={hue} hue={hue} className="size-9 ring-2 ring-card" />
+          ))}
+        </div>
         <div className="flex flex-col gap-1.5">
           <h1 className="text-xl font-semibold">Sign in to Cosign</h1>
           <p className="text-sm text-muted-foreground">Your wallet is your login. Nothing moves without your signature.</p>

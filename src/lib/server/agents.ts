@@ -201,7 +201,7 @@ export async function onchainStatus(m: Membership, a: AgentRow) {
   const want = active && r.abilities.pettyCash ? (r.controls.pettyCashPerWeekUsd ?? 0) : 0;
   if (want !== s.allowancePerWeek) {
     txs.push(
-      prepare(t, companyTreasuryAbi, "setAgentAllowance", [a.walletAddress, parseUnits(String(want), 6), want ? 7n * 86400n : 0n], want ? `Give ${a.name} $${want} of petty cash per week` : `End ${a.name}'s petty cash`),
+      prepare(t, companyTreasuryAbi, "setAgentAllowance", [a.walletAddress, parseUnits(String(want), 6), want ? 7n * 86400n : 0n], want ? `Let ${a.name} refill its wallet with up to $${want} a week` : `Stop ${a.name}'s weekly refill`),
     );
   }
   const needsGas = active && (r.abilities.draft || r.abilities.pettyCash || r.abilities.buy);

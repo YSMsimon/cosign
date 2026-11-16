@@ -39,7 +39,7 @@ function controlsPatch(next: Limits, keys: LimitKey[], c: AgentDetail["controls"
     else if (k === "apiPerDay") purchases.daily = v;
     else if (k === "draftPerPayment") drafts.perPayment = v;
     else if (k === "draftPerDay") drafts.daily = v;
-    else if (k === "askAbove") out.askAboveUsd = v;
+    else if (k === "askAbove") out.askAboveUsd = v > 0 ? v : null; // 0 is "off": asking above $0 would stop every paid call
     else if (k === "perHour") out.maxPaymentsPerHour = v;
     else if (k === "pcPerWeek") out.pettyCashPerWeekUsd = v;
     else if (k === "pcPerRequest") out.topUpMaxUsd = v;
@@ -110,6 +110,7 @@ function AgentPanel({ agent, wsId, canSeeSpend }: { agent: Agent; wsId: string; 
   const contacts = useData(canSeeSpend ? `contacts:${wsId}` : null, () => api.contacts(wsId));
   const [signing, setSigning] = useState<string | null>(null);
   const [signError, setSignError] = useState<string | null>(null);
+  const activeIds = new Set(useAgentsData().views.map((a) => a.id));
 
   if (detail.loading) return <Skeleton className="h-96 rounded-xl" aria-label={`Loading ${agent.name}`} />;
   if (detail.error || !detail.data) {
@@ -143,7 +144,8 @@ function AgentPanel({ agent, wsId, canSeeSpend }: { agent: Agent; wsId: string; 
   const toSign = d.onchain.toSign;
   const approver = ws.me.onchainApprover;
   const rank = (wsSpend.data?.agents ?? [])
-    .map((r) => ({ name: r.name, hue: agent.id === r.agentId ? agent.hue : (r.hue as AgentSetup["hue"]) ?? "blue", total: r.purchases + r.drafts + r.pettyCash, sub: `Drafts $${r.drafts.toFixed(2)} · APIs $${r.purchases.toFixed(2)} · petty cash $${r.pettyCash.toFixed(2)}` }))
+    .filter((r) => activeIds.has(r.agentId))
+    .map((r) => ({ name: r.name, hue: agent.id === r.agentId ? agent.hue : (r.hue as AgentSetup["hue"]) ?? "blue", total: r.purchases + r.drafts, sub: `Drafts $${r.drafts.toFixed(2)} · APIs $${r.purchases.toFixed(2)}` }))
     .sort((a, b) => b.total - a.total);
 
   return (
@@ -168,7 +170,7 @@ function AgentPanel({ agent, wsId, canSeeSpend }: { agent: Agent; wsId: string; 
       </section>
 
       <section id={`${d.id}-settings`} className="flex scroll-mt-6 flex-col gap-3">
-        <SectionHeader title="Settings" description="Checked by our server before anything is signed; the treasury contract also enforces refills and approvals." />
+        <SectionHeader title="Settings" description="Checked by our server before anything is signed; the treasury contract also enforces approvals." />
         {toSign.length > 0 && (
           <Alert
             variant="warning"

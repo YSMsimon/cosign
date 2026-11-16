@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ArrowLeftRight, Coins, Gauge, Landmark, Pencil, RefreshCw, Sparkles, Store, UserPlus, Wallet } from "lucide-react";
+import { ArrowLeftRight, Coins, Gauge, Landmark, Pencil, Sparkles, Store, UserPlus, Wallet } from "lucide-react";
 import { DescriptionList } from "@/components/description-list";
 import { PanelCard, PanelCardContent, PanelCardDescription, PanelCardHeader, PanelCardHeading, PanelCardIcon, PanelCardTitle } from "@/components/panel-card";
 import { QuotaTile } from "@/components/quota-tile";
@@ -19,7 +19,7 @@ import { usd, type AbilityKey, type AgentSetup } from "./mock";
 
 type Section = "wallet" | "treasury";
 const KEYS: Record<Section | "speed", LimitKey[]> = {
-  wallet: ["apiPerPayment", "apiPerDay", "askAbove", "swapMove", "pcPerWeek", "pcPerRequest"],
+  wallet: ["apiPerPayment", "apiPerDay", "askAbove", "swapMove"], // the weekly refill (petty cash) isn't shown in the app
   treasury: ["draftPerPayment", "draftPerDay"],
   speed: ["perHour"],
 };
@@ -79,7 +79,6 @@ export function AgentSettings({
   /* the figure one step down so the tile fits beside the limits; set from here, the library is untouched */
   const tile = { formatValue: usd, healthyLabel: "Under", criticalLabel: "Near limit", className: "[&_[data-slot=stat]]:text-3xl" };
   const rows = (keys: LimitKey[]) => keys.map((k) => ({ id: k, term: LABELS[k], details: fmt(k, s[k]) }));
-  const refillLeft = Math.max(0, Math.min(a.onchain.pettyCashLeftUsd, s.pcPerWeek));
 
   return (
     <PanelCard className="col-span-2">
@@ -113,24 +112,7 @@ export function AgentSettings({
               <QuotaTile icon={Coins} label="Spent today" used={a.usage.purchasesToday} limit={s.apiPerDay} srLabel="Spent from its wallet today" {...tile} />
               <DescriptionList layout="divided" items={rows(["apiPerPayment", "apiPerDay", "askAbove"])} />
             </div>
-            <Item variant="outline" size="sm">
-              <ItemMedia variant="icon">
-                <RefreshCw />
-              </ItemMedia>
-              <ItemContent>
-                <ItemTitle>Refill from the treasury</ItemTitle>
-                <ItemDescription>
-                  {!ab.pettyCash
-                    ? "Off: it only spends what's already in its wallet."
-                    : a.onchain.pettyCashPerWeekUsd > 0
-                      ? `Up to ${usd(s.pcPerWeek)} a week, at most ${usd(s.pcPerRequest)} a time, without asking · ${usd(refillLeft)} left this week. The treasury contract enforces it.`
-                      : `Up to ${usd(s.pcPerWeek)} a week, at most ${usd(s.pcPerRequest)} a time, without asking. An approver sets it on the treasury contract first.`}
-                </ItemDescription>
-              </ItemContent>
-              <ItemActions>
-                <Switch checked={ab.pettyCash} onCheckedChange={(v) => void save(onAbility("pettyCash", v))} aria-label={`${a.name}: refill from the treasury`} />
-              </ItemActions>
-            </Item>
+            {/* "Refill from the treasury" (petty cash) is hidden: it still works in the backend and on the contract */}
             {/* Circle App Kit swaps on Arc: USDC into an allowed token; the USDC counts toward the limits above */}
             <Item variant="outline" size="sm">
               <ItemMedia variant="icon">

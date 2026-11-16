@@ -101,7 +101,7 @@ function ProposalCard({ pid }: { pid: number }) {
       address={{ value: p.to, label: `${name}'s wallet address` }}
       decision={decided}
       waiting={waiting}
-      approved={{ title: `Paid ${usd(p.amountUsd)} to ${name}`, note: `Proposal #${p.id} · approved`, href: `${EXPLORER}${p.to}` }}
+      approved={{ title: `Paid ${usd(p.amountUsd)} to ${name}`, note: `Proposal #${p.id} · approved`, href: p.txHash ? txUrl(p.txHash) : `${EXPLORER}${p.to}` }}
       denied={{ title: "Denied", note: `Proposal #${p.id} cancelled · nothing was paid` }}
       pending={STEPS.approve}
       denySteps={STEPS.deny}

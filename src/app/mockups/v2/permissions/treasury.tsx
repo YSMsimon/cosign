@@ -24,7 +24,7 @@ import { BalanceSpark } from "./charts";
 import { treasury, usd } from "./mock";
 
 /** A ledger row. `byHue`: drafted by an agent (its orb); otherwise by a person (`byInitials`). */
-export type Proposal = { id: number; to: string; amount: number; by: string; byHue?: OrbHue | null; byInitials?: string; approvals: number; threshold?: number; canDecide?: boolean; status: "open" | "paid" | "done" | "cancelled" };
+export type Proposal = { id: number; to: string; amount: number; by: string; byHue?: OrbHue | null; byInitials?: string; approvals: number; threshold?: number; canDecide?: boolean; status: "open" | "paid" | "done" | "cancelled"; /** the transaction that settled it, on the explorer */ href?: string };
 export type Event = { id: string; tone: "info" | "success" | "warning" | "destructive"; icon: React.ReactNode; title: string; description: string; when: string };
 
 /** Everything the tab shows; the design board uses the sample below, the app passes the real treasury. */
@@ -117,7 +117,7 @@ function TreasuryView({ d }: { d: TreasuryData }) {
             </PanelCardIcon>
             <PanelCardHeading>
               <PanelCardTitle>Where money went this week</PanelCardTitle>
-              <PanelCardDescription>{usd(w.apiPurchases + w.pettyCash + w.payments)} in total</PanelCardDescription>
+              <PanelCardDescription>{usd(w.apiPurchases + w.payments)} in total</PanelCardDescription>
             </PanelCardHeading>
           </PanelCardHeader>
           <PanelCardContent>
@@ -125,7 +125,6 @@ function TreasuryView({ d }: { d: TreasuryData }) {
               showLegend
               segments={[
                 { id: "pay", label: "Treasury payments", value: +w.payments.toFixed(2), tone: "selected" },
-                { id: "pc", label: "Petty cash", value: +w.pettyCash.toFixed(2), tone: "warning" },
                 { id: "api", label: "Agents' API purchases", value: +w.apiPurchases.toFixed(2), tone: "info" },
               ]}
             />
@@ -238,7 +237,7 @@ function SampleTreasury() {
             </PanelCardIcon>
             <PanelCardHeading>
               <PanelCardTitle>Where money went this week</PanelCardTitle>
-              <PanelCardDescription>{usd(w.apiPurchases + w.pettyCash + w.payments + paidNow)} in total</PanelCardDescription>
+              <PanelCardDescription>{usd(w.apiPurchases + w.payments + paidNow)} in total</PanelCardDescription>
             </PanelCardHeading>
           </PanelCardHeader>
           <PanelCardContent>
@@ -246,7 +245,6 @@ function SampleTreasury() {
               showLegend
               segments={[
                 { id: "pay", label: "Treasury payments", value: +(w.payments + paidNow).toFixed(2), tone: "selected" },
-                { id: "pc", label: "Petty cash", value: w.pettyCash, tone: "warning" },
                 { id: "api", label: "Agents' API purchases", value: w.apiPurchases, tone: "info" },
               ]}
             />
@@ -399,7 +397,7 @@ function Ledger({
                       )
                     ) : (
                       <Button size="xs" variant="ghost" aria-label={`Proposal ${p.id} on the explorer`} asChild>
-                        <a href={`${EXPLORER}${treasuryAddress}`} target="_blank" rel="noreferrer">
+                        <a href={p.href ?? `${EXPLORER}${treasuryAddress}`} target="_blank" rel="noreferrer">
                           <ExternalLink />
                         </a>
                       </Button>

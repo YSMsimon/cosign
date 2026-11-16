@@ -73,7 +73,7 @@ export function AgentsTab() {
       </section>
 
       <section id={`${a.id}-settings`} className="flex scroll-mt-6 flex-col gap-3">
-        <SectionHeader title="Settings" description="Checked by our server before anything is signed; the treasury contract also enforces refills and approvals." />
+        <SectionHeader title="Settings" description="Checked by our server before anything is signed; the treasury contract also enforces approvals." />
         <div className="grid grid-cols-2 gap-4">
           <AgentSettings key={a.id} a={a} onAbility={onAbility} />
         </div>

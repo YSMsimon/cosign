@@ -28,6 +28,16 @@ export async function listProposals(m: Membership, o: { status?: "open" | "all" 
   const meIsApprover = approvers.map((a) => a.toLowerCase()).includes(m.address);
   const metas = new Map(db().select().from(schema.proposalMeta).where(eq(schema.proposalMeta.treasury, m.workspace.treasury)).all().map((x) => [x.proposalId, x]));
   const agents = new Map(db().select().from(schema.agents).where(eq(schema.agents.workspaceId, m.workspace.id)).all().map((a) => [a.walletAddress, a]));
+  // the transaction that paid or cancelled each proposal, as the QuickNode stream or an Arc read stored it
+  const settled = new Map(
+    db()
+      .select({ id: schema.activity.proposalId, tx: schema.activity.txHash, type: schema.activity.type })
+      .from(schema.activity)
+      .where(eq(schema.activity.treasury, m.workspace.treasury))
+      .all()
+      .filter((a) => a.id !== null && (a.type === "payment_executed" || a.type === "proposal_cancelled"))
+      .map((a) => [a.id as string, a.tx]),
+  );
   const out = [];
   for (let i = Number(count) - 1; i >= 0; i--) {
     const p = await readProposal(t, BigInt(i));
@@ -51,6 +61,7 @@ export async function listProposals(m: Membership, o: { status?: "open" | "all" 
       approvals: p.approvals,
       threshold,
       status: p.executed ? "executed" : p.cancelled ? "cancelled" : "open",
+      txHash: open ? null : (settled.get(String(i)) ?? null),
       you: { canCosign: open && meIsApprover && can(m.permissions, "payments.cosign") && !iApproved, approved: iApproved },
     });
   }

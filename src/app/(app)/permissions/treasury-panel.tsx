@@ -17,6 +17,7 @@ import { TreasuryTab, type Event, type Proposal, type TreasuryData } from "../..
 import { hueOf, useAgentsData } from "../agents-data";
 import { initialsOf, personName } from "../app-shell";
 import { useCosign } from "../cosign";
+import { txUrl } from "../treasury-actions";
 import { useTreasuryActions } from "../treasury-actions";
 
 const DAY = 86_400_000;
@@ -115,9 +116,9 @@ export function TreasuryPanel() {
         case "proposal_cancelled":
           return { ...base, tone: "destructive", icon: <CircleX />, title: `Proposal #${r.proposalId} cancelled`, description: `By ${nameOf(r.actor)} · nothing was paid` };
         case "agent_topped_up":
-          return { ...base, tone: "warning", icon: <PiggyBank />, title: `${nameOf(r.actor)} drew petty cash`, description: amt };
+          return { ...base, tone: "warning", icon: <PiggyBank />, title: `${nameOf(r.actor)} refilled its wallet from the treasury`, description: amt };
         case "allowance_set":
-          return { ...base, tone: "info", icon: <PiggyBank />, title: `Petty cash set for ${nameOf(r.counterparty)}`, description: `${amt} a week` };
+          return { ...base, tone: "info", icon: <PiggyBank />, title: `Refill limit set for ${nameOf(r.counterparty)}`, description: `${amt} a week` };
         case "deposited":
           return { ...base, tone: "success", icon: <Coins />, title: `Treasury received ${amt}`, description: `From ${nameOf(r.actor)}` };
         case "usdc_transfer":
@@ -159,6 +160,7 @@ export function TreasuryPanel() {
       threshold: p.threshold,
       canDecide: p.you.canCosign,
       status: p.status === "executed" ? (p.kind === "payment" ? "paid" : "done") : p.status === "cancelled" ? "cancelled" : "open",
+      href: p.txHash ? txUrl(p.txHash) : undefined,
     };
   };
 
@@ -179,7 +181,7 @@ export function TreasuryPanel() {
     proposals: (proposals.data?.proposals ?? []).map(ledgerRow),
     wallets: agentsData.views.map((a) => {
       const d = balances.data?.find((x) => x.id === a.id);
-      const roles = [d?.onchain.isProposer && "Drafts payments", d && d.onchain.pettyCashPerWeekUsd > 0 && "Petty cash"].filter(Boolean) as string[];
+      const roles = [d?.onchain.isProposer && "Drafts payments"].filter(Boolean) as string[]; // petty cash isn't shown in the app
       return { id: a.id, name: a.name, hue: hueOf(a), address: a.wallet, usdc: d ? Number(d.balances.walletUsdc) : null, roles };
     }),
     decide: async (p, kind, step) => {

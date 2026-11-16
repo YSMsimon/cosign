@@ -58,14 +58,14 @@ export function useAgentsData() {
 /** What the agent panel in the chat shows: its wallet and its place on the treasury. */
 export function aboutInfo(d: AgentDetail | undefined, ws: WorkspaceDetail, fallbackWallet: string): AboutInfo {
   const ab = d?.abilities;
-  const can = ab ? [ab.buy && "Spend from its wallet", ab.draft && "Draft payments", ab.pettyCash && "Petty cash"].filter(Boolean).join(" · ") || "No money" : "…";
-  const perWeek = d?.onchain.pettyCashPerWeekUsd ?? 0;
-  const left = Number(d?.onchain.pettyCashLeftUsd ?? 0);
+  // petty cash (the weekly refill from the treasury) works but isn't shown: the app tells two things, the treasury and
+  // the agent's own wallet (Simon, 2026-11-15)
+  const can = ab ? [ab.buy && "Spend from its wallet", ab.draft && "Draft payments"].filter(Boolean).join(" · ") || "No money" : "…";
   return {
     wallet: d?.wallet ?? fallbackWallet,
     usdc: d ? Number(d.balances.walletUsdc) : null,
     can,
     treasury: { address: ws.treasury.address, threshold: ws.treasury.threshold, approvers: ws.treasury.approvers.length, usdc: Number(ws.treasury.balanceUsd) },
-    pettyCash: ab?.pettyCash && perWeek > 0 ? { perWeek, used: Math.max(0, perWeek - left) } : null,
+    pettyCash: null, // hidden (see above)
   };
 }
