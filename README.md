@@ -17,7 +17,7 @@ Built for the UBC 2026 Hackathon.
 | Track | Agentic Payments and AI |
 | Chain award | Best use of Arc |
 | Bounties | QuickNode Streams, Grok Bot, ElevenLabs |
-| Demo video | _link_ |
+| Demo video | [youtu.be/4_txyu3nwbE](https://youtu.be/4_txyu3nwbE) (2:59) |
 | Devpost | _link_ |
 | Grok Bot | [Cosign Agent](https://x.ai/bot/40hHKyBjRaOmvwp6CICdo), shared from the Grok Bot app · [chat export](docs/grok-bot-chat-export.md) |
 
@@ -307,9 +307,6 @@ payment against the bill and saved payees, and posts what it found in the team's
 - They are paid to a separate seller wallet (`SELLER_PRIVATE_KEY`), so every payment is a real USDC payment on Arc
   testnet.
 - Their data: `src/lib/demo-jokes.ts` and `src/lib/demo-bills.ts`. The key store: `src/lib/demo-api-keys.ts`.
-
-**UI**: shadcn/ui, Pesto UI, ElevenLabs UI (Orb), Dice UI (mentions), Recharts (spending chart), Streamdown (agent
-answers), lucide icons. No hand-drawn art.
 
 **Tests**: 85 unit tests (`node:test`, `tests/unit/`), 26 end-to-end API tests against the running server
 (`tests/e2e/`), and 13 Playwright browser specs (`tests/browser/`) covering sign-in, chat, approvals, permissions,
