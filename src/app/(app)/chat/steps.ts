@@ -2,7 +2,7 @@
  * One line per thing the agent did, in plain words, from the tool's name, its arguments and its result (the same
  * record the thread keeps). Used for a finished turn and, while a turn runs, for each step as it arrives.
  */
-import { paidLine, sellerName } from "@/lib/x402/label";
+import { callLine, paidLine, sellerName } from "@/lib/x402/label";
 
 type Args = Record<string, unknown>;
 type Result = Record<string, unknown> | null;
@@ -29,7 +29,7 @@ function doing(name: string, a: Args, r: Result): string {
       return a.query ? `Looked for paid APIs: ${a.query}` : "Looked for paid APIs";
     case "paid_fetch": {
       const paid = r?.paid as { amountUsd?: unknown; rail?: unknown } | undefined;
-      return paid ? paidLine(a.url, paid) : `Called ${sellerName(a.url)}`;
+      return paid ? paidLine(a.url, paid) : r ? callLine(a.url, r.status, !!(a.api_key || a.headers)) : `Calling ${sellerName(a.url)}`;
     }
     case "propose_payment":
       return r?.proposalId !== undefined ? `Drafted proposal #${r.proposalId} · ${usd(a.amount_usd)} to ${short(a.to)}` : `Drafted ${usd(a.amount_usd)} to ${short(a.to)}`;

@@ -33,6 +33,7 @@ import { memberThread, runContext, runTurn, waitForThread } from "./chat";
 import { actorFor, botScope, setTask, taskForRawToken } from "./grokbot";
 import { badRequest, forbidden, HttpError } from "./http";
 import { decryptSecret, encryptSecret, id, newToken, safeEqual, sha256 } from "./util";
+import { stillTalking } from "../voice-pause";
 
 const now = () => new Date().toISOString();
 const VOICE_TOKEN_MIN = 30;
@@ -54,7 +55,7 @@ export const VOICE_NOTE = [
   "Answer in one to three short spoken sentences. No markdown, lists, headings, tables, links or emoji.",
   'Say amounts the way people say them ("two dollars forty"). Never read out a full wallet address or transaction hash: use the contact\'s name, or the last four characters.',
   "If you draft a payment, say its proposal number and that it needs a cosign; Cosign shows the cosign card by itself.",
-  "If you ask a person to add funds, say how much and that they can approve it on the screen; Cosign shows the funding card by itself.",
+  "If the person asks you to add or request money and says how much, ask for it right away with request_funds: don't ask what it's for and don't confirm the amount first. Then say how much and that they can approve it on the screen; Cosign shows the funding card by itself.",
   "Every tool has a say_first field: one short sentence of what you are about to do, read aloud before the tool runs. Don't repeat it in your answer.",
   "Balances, proposals, payees and limits change all the time: whenever the answer depends on them, read them with your tools in this turn. Never repeat a number from earlier in the conversation as if it were current.",
 ].join(" ");
@@ -116,8 +117,9 @@ export function agentConfig(agent: AgentRow, base: string, webhookId?: string, o
     name: `Cosign: ${agent.name}`,
     tags: ["cosign"],
     conversation_config: {
-      // no speculative turns: a turn can draft a payment, so we answer only what the person finished saying
-      turn: { speculative_turn: false },
+      // no speculative turns: a turn can draft a payment, so we answer only what the person finished saying.
+      // Eager turn-taking: answer as soon as the person finishes a sentence (normal waited seconds through pauses).
+      turn: { speculative_turn: false, turn_eagerness: "eager" },
       agent: {
         first_message: "Hi, it's {{agent_name}}. What do you need?",
         language: "en",
@@ -506,17 +508,7 @@ export function speakable(md: string): string {
   return lines.map((l) => (/[.!?:;,]$/.test(l) ? l : `${l}.`)).join(" ").replace(/\s+/g, " ").trim();
 }
 
-/**
- * Is this a pause, not a turn? ElevenLabs sends "..." when the person goes quiet, and sometimes a fragment when they
- * pause mid-sentence ("Uh-", "Um...", "Can you-"): answering cuts them off, so we stay quiet and let them finish.
- */
-export function stillTalking(text: string): boolean {
-  const t = text.trim();
-  if (/^[\s.…]*$/.test(t)) return true;
-  const words = t.toLowerCase().replace(/[.…,!?]/g, " ").split(/\s+/).filter(Boolean);
-  if (words.every((w) => /^(uh+|um+|hmm+|mm+|er+|ah+|eh|oh|so|and|but|like|well)-?$/.test(w))) return true;
-  return /-$/.test(t) && words.length <= 3; // cut off after a word or two
-}
+export { stillTalking } from "../voice-pause";
 
 /**
  * One custom-LLM request from ElevenLabs: answer the newest thing the person said with the Cosign loop,

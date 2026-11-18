@@ -19,7 +19,7 @@ import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import { runToolChecked, toolsFor } from "../agent/tools";
 import { rulesMarkdown } from "../agent/rules";
 import { db, schema } from "../db";
-import { paidLine } from "../x402/label";
+import { callLine, paidLine } from "../x402/label";
 import type { AgentRow, ConnectionRow, TaskRow, WorkspaceRow } from "../db/schema";
 import { can } from "../perm/permissions";
 import type { Membership } from "./access";
@@ -333,8 +333,9 @@ export function recordToolCall(taskId: string, name: string, res: { status: stri
   const progress = JSON.parse(t.progress) as { t: string; message: string; kind?: string }[];
   const detail = res.status === "refused" ? `refused: ${res.reason}` : res.status === "error" ? `error: ${res.error}` : "ok";
   // a paid call says what it paid and how, the same line the chat shows ("Paid $0.01 by nanopayment · invoice reader")
-  const paid = res.status === "ok" && name.startsWith("paid_fetch") ? (res.output as { paid?: { rail?: unknown; amountUsd?: unknown } } | null)?.paid : undefined;
-  const message = paid ? paidLine(args.url, paid) : `${name} · ${detail}`;
+  const out = res.status === "ok" && name.startsWith("paid_fetch") ? (res.output as { paid?: { rail?: unknown; amountUsd?: unknown } | null; status?: unknown } | null) : null;
+  // an unpaid call says what happened too ("Called Bills API · API key required", "Read Bills API with its API key")
+  const message = out?.paid ? paidLine(args.url, out.paid) : out ? callLine(args.url, out.status, !!(args.api_key || args.headers)) : `${name} · ${detail}`;
   db().update(schema.tasks).set({ progress: JSON.stringify([...progress, { t: now(), kind: "tool", message }]) }).where(eq(schema.tasks.id, taskId)).run();
 }
 

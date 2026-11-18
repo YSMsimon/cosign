@@ -25,6 +25,9 @@ const g = globalThis as unknown as { __cosignWatched?: Set<string>; __cosignWatc
 const watched: Set<string> = (g.__cosignWatched ??= new Set<string>());
 const rate: Map<string, number[]> = (g.__cosignWatchRate ??= new Map<string, number[]>());
 
+/** These checks start with no one asking, so the routine also says what it did in its own Grok chat (setup's summary rule, made explicit). */
+const CHAT_SUMMARY =
+  "After you post the result to Cosign, also post a one- or two-line summary of this check in your own Grok chat with the person who set you up, starting with the agent's name (for example \"Payables checked…\"), so they see it there too.";
 const money = (x: string | null) => `$${Number(x ?? 0).toFixed(2)}`;
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
@@ -58,9 +61,10 @@ async function jobFor(r: ActivityRow, treasury: string): Promise<{ instructions:
         `Onchain · paid proposal #${r.proposalId}: ${money(r.amountUsd)} to ${who(r.counterparty)}, ${seen}`,
         "",
         `The company treasury just paid proposal #${r.proposalId}: ${money(r.amountUsd)} to ${r.counterparty}${memo}, ${tx}.`,
-        "Check this payment: confirm the payee is a saved contact (list_allowed). When the memo names a bill (or an invoice), read that bill (paid_fetch on the bill reader) and add up everything the treasury has paid for that bill (list_proposals with status 'all'), so a payment that completes an earlier partial one counts as paid in full.",
+        "Check this payment: confirm the payee is a saved contact (list_allowed). When the memo names a bill (or an invoice), read that bill from the Bills API (paid_fetch on its URL from list_allowed sellers; if it answers 401, buy a key as it says and call again with the key) and add up everything the treasury has paid for that bill (list_proposals with status 'all'), so a payment that completes an earlier partial one counts as paid in full.",
         "If something doesn't match (a different payee, or less or more paid than the bill), say so plainly with the numbers and the exact amount missing or overpaid, and mention a person who approves. Don't draft a fix yourself: a person decides. If it's right, report it in one or two lines with the proposal number.",
         "Write it for a person: name the payee, and don't paste wallet addresses or transaction hashes (the app links them).",
+        CHAT_SUMMARY,
       ].join("\n"),
     };
   }
@@ -72,6 +76,7 @@ async function jobFor(r: ActivityRow, treasury: string): Promise<{ instructions:
         `${money(r.amountUsd)} USDC just came into the company treasury from ${r.actor}, ${tx}.`,
         "Find out what it is: a saved contact (list_allowed), one of our own wallets, or funds a person added (for example after a funding request). Check the new treasury balance (get_balances).",
         "If the sender is unknown, mention a person who approves and ask what it is. Otherwise report it in one or two lines with the amount, who sent it and the transaction.",
+        CHAT_SUMMARY,
       ].join("\n"),
     };
   }

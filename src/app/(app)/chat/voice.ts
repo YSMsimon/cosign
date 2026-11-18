@@ -10,6 +10,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useConversation } from "@elevenlabs/react";
+import { stillTalking } from "@/lib/voice-pause";
 import { api } from "@/lib/client/api";
 import { invalidate, useData } from "@/lib/client/data";
 import { searchLine, stepLine } from "./steps";
@@ -97,6 +98,8 @@ export function useVoiceCall(agent: { id: string; name: string } | undefined) {
   const handlers = useCallback(
     () => ({
     onMessage: (m: { source: string; message: string }) => {
+      // "..." or "Um-" is a pause, not a turn: the agent stays quiet, so don't wait for an answer to it
+      if (m.source === "user" && stillTalking(m.message)) return;
       if (m.source === "user") {
         // a new turn: its own steps and words
         clearWords();
