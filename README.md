@@ -18,7 +18,7 @@ Built for the UBC 2026 Hackathon.
 | Chain award | Best use of Arc |
 | Bounties | QuickNode Streams, Grok Bot, ElevenLabs |
 | Demo video | [youtu.be/4_txyu3nwbE](https://youtu.be/4_txyu3nwbE) (2:59) |
-| Devpost | _link_ |
+| Devpost | [devpost.com/software/cosign-3qd8a5](https://devpost.com/software/cosign-3qd8a5) |
 | Grok Bot | [Cosign Agent](https://x.ai/bot/40hHKyBjRaOmvwp6CICdo), shared from the Grok Bot app · [chat export](docs/grok-bot-chat-export.md) |
 
 ## The problem
@@ -346,12 +346,12 @@ How Cosign meets each of Arc's objectives:
 
 | Contract | Address |
 |---|---|
-| `TreasuryFactory` (v3) | `0xB794E55ed8b6833AF935c8a8bbD5B3b76f063D79` |
-| `CompanyTreasury` (demo team) | `0x3e7ac3a7f154ac6680b0bf0418132c10e6af951e` |
-| USDC (Arc native, ERC-20 interface) | `0x3600000000000000000000000000000000000000` |
-| Circle Gateway wallet (batched x402) | `0x0077777d7EBA4688BDeF3E311b846F25870A19B9` |
+| `TreasuryFactory` (v3) | [`0xB794E55ed8b6833AF935c8a8bbD5B3b76f063D79`](https://testnet.arcscan.app/address/0xB794E55ed8b6833AF935c8a8bbD5B3b76f063D79) |
+| `CompanyTreasury` (demo team) | [`0x3e7ac3a7f154ac6680b0bf0418132c10e6af951e`](https://testnet.arcscan.app/address/0x3e7ac3a7f154ac6680b0bf0418132c10e6af951e) |
+| USDC (Arc native, ERC-20 interface) | [`0x3600000000000000000000000000000000000000`](https://testnet.arcscan.app/address/0x3600000000000000000000000000000000000000) |
+| Circle Gateway wallet (batched x402) | [`0x0077777d7EBA4688BDeF3E311b846F25870A19B9`](https://testnet.arcscan.app/address/0x0077777d7EBA4688BDeF3E311b846F25870A19B9) |
 
-Explorer: https://testnet.arcscan.app
+Explorer: [testnet.arcscan.app](https://testnet.arcscan.app)
 
 ## How money moves
 
@@ -393,7 +393,7 @@ pnpm dev
 pnpm test:unit && pnpm test:e2e   # e2e needs pnpm dev running
 ```
 
-Network: Arc testnet (chain id 5042002, RPC https://rpc.testnet.arc.io). Testnet USDC: https://faucet.circle.com.
+Network: Arc testnet (chain id 5042002, RPC `https://rpc.testnet.arc.io`). Testnet USDC: [faucet.circle.com](https://faucet.circle.com).
 Grok Bot and ElevenLabs need a public URL for their callbacks (an ngrok tunnel, set as `PUBLIC_BASE_URL`). Backend
 details: [docs/backend.md](docs/backend.md); frontend: [docs/frontend.md](docs/frontend.md).
 
